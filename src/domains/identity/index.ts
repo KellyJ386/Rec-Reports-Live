@@ -5,3 +5,4 @@
 // Never import another domain's internal files, only its index. ESLint
 // enforces this (see eslint.config.mjs).
 export {};
+export * from './schemas';
