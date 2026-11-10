@@ -11,6 +11,7 @@ export const auditLogFilterSchema = z
       .string()
       .regex(/^[a-z][a-z0-9_]{0,62}$/)
       .optional(),
+    action: z.enum(['insert', 'update', 'delete']).optional(),
     since: z.iso.datetime({ offset: true }).optional(),
     until: z.iso.datetime({ offset: true }).optional(),
     limit: z.number().int().min(1).max(200).default(50),

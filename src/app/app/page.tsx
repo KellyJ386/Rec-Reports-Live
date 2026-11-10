@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { getActiveOrganization, getSessionContext } from '@/lib/auth/session';
 import { signOut, switchOrganization } from './actions';
 
@@ -56,6 +57,12 @@ export default async function AppHomePage() {
           ))}
         </ul>
       )}
+
+      {active ? (
+        <p>
+          <Link href="/app/admin">Admin</Link>
+        </p>
+      ) : null}
 
       <form action={signOut}>
         <button type="submit">Sign out</button>
