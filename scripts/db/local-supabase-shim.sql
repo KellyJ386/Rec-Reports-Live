@@ -3,12 +3,27 @@
 -- Postgres where the Supabase Docker stack is not available.
 -- CI and real environments use the real Supabase stack, never this file.
 
-create role anon nologin noinherit;
-create role authenticated nologin noinherit;
-create role service_role nologin noinherit bypassrls;
-create role authenticator login noinherit;
+-- Roles are cluster-wide, so create them only when missing. That lets several
+-- test databases share one Postgres at the same time.
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'anon') then
+    create role anon nologin noinherit;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    create role authenticated nologin noinherit;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then
+    create role service_role nologin noinherit bypassrls;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'authenticator') then
+    create role authenticator login noinherit;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'supabase_auth_admin') then
+    create role supabase_auth_admin nologin noinherit;
+  end if;
+end $$;
 grant anon, authenticated, service_role to authenticator;
-create role supabase_auth_admin nologin noinherit;
 
 create schema if not exists auth authorization supabase_auth_admin;
 create schema if not exists extensions;

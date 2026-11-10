@@ -38,7 +38,7 @@ Overrides can raise or lower. Platform admins always get `admin`.
 - the target's highest rank anywhere in the organization is strictly below the actor's rank in scope;
 - any role being granted ranks (with its scope) strictly below the actor's rank;
 - for `user_permissions`, the level granted is at most the actor's own effective level for that module in that scope;
-- the target is not themselves. Nobody changes their own roles, permissions, account or person row (self-service profile edits need a later, narrower RPC).
+- the target is not themselves. Nobody changes their own roles, permissions, account or person row through the tables. The one exception is `update_own_profile` (below), which edits only `preferred_name` and `phone`.
 
 Consequences: an org admin (90) can create and remove location admins (80) but not other org admins; creating or removing an org admin needs a platform admin or the service role. A location admin (80) can't create another admin.
 
@@ -72,7 +72,7 @@ Consequences: an org admin (90) can create and remove location admins (80) but n
 | `user_permissions` | tier rule | tier rule, `level` only | tier rule |
 | `audit_log`, `platform_admins`, `modules` | no | no | no |
 
-Platform admins pass every policy through the helpers (support needs no service-role key). A location-scoped admin who creates a person can't read the row back until it holds an assignment at their location: generate the id client-side, insert without `RETURNING` (supabase-js: no `.select()`), then insert the role assignment.
+Platform admins pass every policy through the helpers (support needs no service-role key). A plain `insert into people ... returning` fails for a location-scoped admin, because a person is visible to them only once it holds an assignment at their location. Onboard with `create_person_with_assignment` instead.
 
 **Grants.** `anon` and `PUBLIC` have no privileges on any table or function. `authenticated` has only the table operations listed above, with column-level UPDATE grants (never `id`, `organization_id`, `location_id`, `slug`, `key`). `service_role` has full access except `audit_log` (select, insert). Default privileges are revoked, so a new table or function is granted to nobody until a migration says so. Every new migration must: create the table, `enable row level security`, `revoke all ... from public, anon, authenticated`, grant exactly what its policies need, and attach the audit trigger.
 
@@ -104,6 +104,25 @@ private.can_manage_user_permission(p_organization_id uuid, p_person_id uuid, p_l
 ```
 
 Policy style: wrap argument-free helpers in a subselect (`organization_id in (select public.auth_org_ids())`, `(select public.is_platform_admin())`) so Postgres evaluates them once per statement. Policies on identity tables only call these definer helpers, so they never recurse. RLS is enabled (not `force`d) on every table: the definer helpers rely on the table owner bypassing RLS.
+
+### People RPCs (migration `20261111000500_people_rpcs`)
+
+Both are `security definer`, `set search_path = ''`, take identity from `auth.uid()` only, raise `42501` (insufficient_privilege) when refused, and are granted to `authenticated` and `service_role` (not anon). Their writes go through the normal triggers, so the audit log records the real caller (`actor_role = authenticated`, the caller's user and person ids).
+
+```sql
+public.create_person_with_assignment(
+  p_organization_id uuid, p_first_name text, p_last_name text,
+  p_role_id uuid, p_location_id uuid,            -- p_location_id null = organization scope (admin role only)
+  p_preferred_name text default null, p_email text default null,
+  p_phone text default null, p_employee_number text default null
+) returns uuid                                   -- the new person id
+```
+Creates the person and their first role assignment in one transaction. The checks are the same ones the table policies use: `private.can_create_person(org)`, then `private.can_manage_role_assignment(org, new_person, role, location)` (tier rule, scope, rank), then the `role_assignments` validation trigger. Any failure rolls back both rows. The caller can read both rows back afterwards. There is no service-role shortcut: without a user JWT it raises "not signed in". Server code holding the service key inserts the two rows directly. The session `role` setting is never trusted for authorization, because the API login role (`authenticator`) is a member of `service_role`.
+
+```sql
+public.update_own_profile(p_organization_id uuid, p_preferred_name text, p_phone text) returns uuid  -- caller's person id
+```
+For a member of the organization (active account, person not archived, at least one active assignment): sets exactly `preferred_name` and `phone` on the caller's own person row. A null or blank value clears the field. It can't change names of record, `email` (the contact/invite address), `employee_number`, `archived_at`, `organization_id`, or anything that affects access. Platform admins with no person in the org, disabled accounts, non-members and service_role without a JWT are refused.
 
 ### Audit log
 

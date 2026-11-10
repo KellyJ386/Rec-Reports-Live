@@ -6,6 +6,7 @@
 #   scripts/db/test-local.sh            # migrate + run all tests
 #   scripts/db/test-local.sh --no-tests # migrate only (leaves the DB in place)
 #   scripts/db/test-local.sh --seed     # migrate + supabase/seed.sql + tests
+#   RECREPORTS_TEST_DB=mydb scripts/db/test-local.sh   # use another database name
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -25,21 +26,7 @@ done
 
 PSQL=(psql -X -q -v ON_ERROR_STOP=1)
 
-"${PSQL[@]}" -d postgres -c "drop database if exists $DB" -c "create database $DB"
-# Roles are cluster-wide; drop leftovers from an earlier run.
-"${PSQL[@]}" -d postgres <<'SQL'
-do $$
-declare r text;
-begin
-  foreach r in array array['anon','authenticated','service_role','authenticator','supabase_auth_admin'] loop
-    if exists (select 1 from pg_roles where rolname = r) then
-      execute format('drop owned by %I cascade', r);
-      execute format('drop role %I', r);
-    end if;
-  end loop;
-end $$;
-SQL
-
+"${PSQL[@]}" -d postgres -c "drop database if exists $DB with (force)" -c "create database $DB"
 "${PSQL[@]}" -d "$DB" -f "$ROOT/scripts/db/local-supabase-shim.sql"
 "${PSQL[@]}" -d "$DB" -c "alter database $DB set search_path = \"\$user\", public, extensions"
 

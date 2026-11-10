@@ -46,7 +46,7 @@ Key constraints:
 
 ## Phase 1 schema (built)
 
-Migrations: `20261111000100_organizations_and_resources`, `..000200_identity_and_access`, `..000300_rls_helpers_and_policies`, `..000400_audit_log`. Access rules are in `docs/SECURITY.md`.
+Migrations: `20261111000100_organizations_and_resources`, `..000200_identity_and_access`, `..000300_rls_helpers_and_policies`, `..000400_audit_log`, `..000500_people_rpcs` (RPCs `create_person_with_assignment` and `update_own_profile`). Access rules and RPC contracts are in `docs/SECURITY.md`.
 
 Schemas: `public` (tables, the public helpers); `private` (trigger functions and policy helpers, not exposed by the Data API).
 
@@ -63,7 +63,7 @@ Schemas: `public` (tables, the public helpers); `private` (trigger functions and
 | `modules` | global lookup | PK is `key` (text). 22 keys: locations_spaces, people_roles, audit_log, communications, tasks, staff_schedule, availability_time_off, shift_swaps, time_clock, timesheets, certifications, forms, checklists, incidents, accidents, daily_log, headcounts, facility_schedule, equipment, maintenance, documents, reports. |
 | `roles` | global (system) or org (custom) | `organization_id` null = system role. `unique nulls not distinct (organization_id, key)`; `key` immutable. `rank`: super_admin 100, admin 80, manager 50, staff 10; custom 1-79. Custom keys can't reuse system keys; `org_admin`, `facility_manager`, `gm`, `supervisor` are rejected by constraint. |
 | `role_default_permissions` | global or org | `(role_id, module_key)` unique, `level permission_level`. `organization_id` is copied from the role by trigger (null for system roles). |
-| `people` | org | Business person; may have no account. `first_name`, `last_name`, `preferred_name`, `email`, `phone`, `employee_number` (unique per org). `archived_at`; never hard-deleted by tenants. |
+| `people` | org | Business person; may have no account. `first_name`, `last_name`, `preferred_name`, `email`, `phone`, `employee_number` (unique per org). `archived_at`; never hard-deleted by tenants. Onboard with `create_person_with_assignment` (person + first assignment, atomic). A member edits only their own `preferred_name` and `phone`, through `update_own_profile`. |
 | `accounts` | org | `user_id` → `auth.users`. `unique (user_id, organization_id)`, `unique (person_id)`. `disabled_at` set = not a member. Created by service_role only. |
 | `role_assignments` | org or location | `location_id` null = organization scope, allowed only for the system `admin` role (trigger). `role_id` is a plain FK (system roles have no org); a trigger requires a system role or a custom role of the same org, never `super_admin`, never an archived role. `unique nulls not distinct (person_id, role_id, location_id)`. No updates by tenants: delete + insert. |
 | `user_permissions` | org or location | Override of the role default for one module. `unique nulls not distinct (person_id, module_key, location_id)`. Only `level` is updatable. |
