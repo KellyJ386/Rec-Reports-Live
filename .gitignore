@@ -1,0 +1,17 @@
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+.vercel/
+npm-debug.log*
+.DS_Store
+
+# Environment files: never commit real values
+.env*
+!.env.example
+
+# Supabase local
+supabase/.branches/
+supabase/.temp/
