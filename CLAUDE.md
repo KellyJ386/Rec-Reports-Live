@@ -41,3 +41,20 @@ Rec Reports has its own Supabase project and its own Vercel project. **Never poi
 ## Reusing RinkReports Pro
 
 RinkReports Pro (`KellyJ386/Rink-Reports-Pro`) is a reference. It is not a dependency. Copy patterns, not code wholesale: re-check tenancy, naming, and the rules above for anything you bring over. Never modify RinkReports Pro from work in this repo.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `npm run lint` / `npm run typecheck` / `npm test` / `npm run build` | App checks. CI runs all four. |
+| `supabase test db` | Runs the pgTAP suite in `supabase/tests/database/` on the local Supabase stack. CI runs this. |
+| `bash scripts/db/test-local.sh` | Same migrations and pgTAP suite on a plain local Postgres with a small Supabase stand-in, for sandboxes where Docker images can't be pulled. Add `--seed` to load `supabase/seed.sql`. |
+| `node scripts/seed-users.mjs` | Creates logins for the seeded mock people. Needs the service-role key; never run it against production. |
+
+After every migration: regenerate `src/lib/supabase/database.types.ts`, add pgTAP allow and deny tests, and update `docs/DATA_MODEL.md` and `docs/SECURITY.md`.
+
+## Phase 1 status and open items
+
+Built: scaffold and CI, tenancy and access schema with RLS, audit log, sign-in and password reset, plain admin screens, mock seed. See `docs/SECURITY.md` for the access model.
+
+Not built yet (required by `docs/SECURITY.md` before any real data): MFA for admins, 30-minute admin idle sign-out, app-level rate limits on sign-in and password reset, the invite flow that creates logins, and retention for the audit log.
