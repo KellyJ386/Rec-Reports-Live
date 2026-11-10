@@ -46,18 +46,18 @@ Key constraints:
 
 ## Phase 1 schema (built)
 
-Migrations: `20261111000100_organizations_and_resources`, `..000200_identity_and_access`, `..000300_rls_helpers_and_policies`, `..000400_audit_log`, `..000500_people_rpcs` (RPCs `create_person_with_assignment` and `update_own_profile`). Access rules and RPC contracts are in `docs/SECURITY.md`.
+Migrations: `20261111000100_organizations_and_resources`, `..000200_identity_and_access`, `..000300_rls_helpers_and_policies`, `..000400_audit_log`, `..000500_people_rpcs` (RPCs `create_person_with_assignment` and `update_own_profile`), `..000600_security_review_fixes` (review fixes; RPCs `person_effective_permission` and `replace_role_assignment`). Access rules and RPC contracts are in `docs/SECURITY.md`.
 
 Schemas: `public` (tables, the public helpers); `private` (trigger functions and policy helpers, not exposed by the Data API).
 
 | Table | Scope | Notes that differ from the obvious |
 | --- | --- | --- |
 | `organizations` | tenant root (no `organization_id`) | `slug` unique, lowercase `a-z0-9-`. Insert/delete by service_role only. Insert trigger creates the `organization_settings` row and default `space_kinds` (pool, gym, court, studio, rink, field, room, other). |
-| `organization_settings` | org | Exactly one row per org (`organization_id` unique). `default_timezone` (IANA), `week_starts_on` 0-6 (0 = Sunday), `settings jsonb` object. |
-| `locations` | org | `timezone` required, validated: `UTC` or an `Area/Location` name in `pg_timezone_names` (rejects `EST`, `UTC+5`). Optional `code` unique per org. Unique active name per org. `archived_at`. |
+| `organization_settings` | org | Exactly one row per org (`organization_id` unique). `default_timezone` (IANA), `week_starts_on` 0-6 (0 = Sunday), `settings jsonb` object, at most 64 kB as text. |
+| `locations` | org | Archiving or restoring needs an org-scope admin (trigger). `timezone` required, validated: `UTC` or an `Area/Location` name in `pg_timezone_names` (rejects `EST`, `UTC+5`). Optional `code` unique per org. Unique active name per org. `archived_at`. |
 | `space_kinds` | org | Per-org lookup, `unique (organization_id, key)`; `key` immutable. `archived_at`. |
 | `spaces` | location | FKs: `(location_id, organization_id)`, `(space_kind_id, organization_id)`, `(parent_space_id, organization_id, location_id)`. One level of nesting only (trigger): a parent is top level, a space with children can't get a parent. `location_id` immutable. Unique active name per (location, parent). `archived_at`; no hard delete by tenants. |
-| `space_hours` | location | `day_of_week` ISO 1 = Monday .. 7 = Sunday; `opens_at < closes_at` (`24:00` allowed, overnight = two rows); optional `effective_from/to` dates for seasons. No overlap constraint yet. FK `(space_id, organization_id, location_id)`. |
+| `space_hours` | location | `day_of_week` ISO 1 = Monday .. 7 = Sunday; `opens_at < closes_at` (`24:00` allowed, overnight = two rows); optional `effective_from/to` dates for seasons. Exclusion constraint `space_hours_no_overlap` (btree_gist): no two rows for the same space and weekday may overlap in time (`[opens_at, closes_at)`, type `time_range`) when their date ranges overlap. A null date is open-ended. Adjacent rows such as 06:00-12:00 and 12:00-18:00 are fine. FK `(space_id, organization_id, location_id)`. |
 | `space_closures` | location | `space_id` null = whole location closed. `starts_at < ends_at` (timestamptz). |
 | `platform_admins` | platform | `user_id` PK → `auth.users`. The `super_admin` tier. Service-role only. |
 | `modules` | global lookup | PK is `key` (text). 22 keys: locations_spaces, people_roles, audit_log, communications, tasks, staff_schedule, availability_time_off, shift_swaps, time_clock, timesheets, certifications, forms, checklists, incidents, accidents, daily_log, headcounts, facility_schedule, equipment, maintenance, documents, reports. |
@@ -65,7 +65,7 @@ Schemas: `public` (tables, the public helpers); `private` (trigger functions and
 | `role_default_permissions` | global or org | `(role_id, module_key)` unique, `level permission_level`. `organization_id` is copied from the role by trigger (null for system roles). |
 | `people` | org | Business person; may have no account. `first_name`, `last_name`, `preferred_name`, `email`, `phone`, `employee_number` (unique per org). `archived_at`; never hard-deleted by tenants. Onboard with `create_person_with_assignment` (person + first assignment, atomic). A member edits only their own `preferred_name` and `phone`, through `update_own_profile`. |
 | `accounts` | org | `user_id` → `auth.users`. `unique (user_id, organization_id)`, `unique (person_id)`. `disabled_at` set = not a member. Created by service_role only. |
-| `role_assignments` | org or location | `location_id` null = organization scope, allowed only for the system `admin` role (trigger). `role_id` is a plain FK (system roles have no org); a trigger requires a system role or a custom role of the same org, never `super_admin`, never an archived role. `unique nulls not distinct (person_id, role_id, location_id)`. No updates by tenants: delete + insert. |
+| `role_assignments` | org or location | `location_id` null = organization scope, allowed only for the system `admin` role (trigger). A person's last assignment can be removed only by org scope (trigger `role_assignments_keep_last`). Swap roles with `replace_role_assignment`. `role_id` is a plain FK (system roles have no org); a trigger requires a system role or a custom role of the same org, never `super_admin`, never an archived role. `unique nulls not distinct (person_id, role_id, location_id)`. No updates by tenants: delete + insert. |
 | `user_permissions` | org or location | Override of the role default for one module. `unique nulls not distinct (person_id, module_key, location_id)`. Only `level` is updatable. |
 | `job_titles` | org | Routing only. Unique active name per org. `archived_at`. |
 | `person_job_titles` | org or location | `location_id` null = everywhere the person works. `unique nulls not distinct (person_id, job_title_id, location_id)`. |
@@ -84,4 +84,4 @@ select private.enable_audit('public.my_table');                                 
 select private.enable_audit('public.incident_sensitive_details', 'id', array['injury_description']);
 ```
 
-Every table that may hold injury or medical details must list those columns in `p_redact`. UPDATE, DELETE and TRUNCATE on `audit_log` raise for every role, owner included.
+Every table that may hold injury or medical details must list those columns in `p_redact`. UPDATE, DELETE and TRUNCATE on `audit_log` raise for every role, owner included. Only the trigger function inserts (`service_role` has SELECT only). `enable_audit` also installs a `zz_audit_no_truncate` statement trigger, so TRUNCATE on any audited table raises (it would bypass row triggers).
