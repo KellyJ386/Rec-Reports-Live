@@ -40,6 +40,52 @@ export function toPaged<T>(
   return { rows: list, total: total ?? list.length, page, pageSize };
 }
 
+/** The page to show: the requested one, but never past the last page the total allows. */
+export function clampPage(page: number, total: number, pageSize: number = PAGE_SIZE): number {
+  return Math.min(Math.max(1, page), pageCount(total, pageSize));
+}
+
+type PageResponse<T> = {
+  data: T[] | null;
+  count: number | null;
+  error: DbErrorLike | null;
+};
+
+/**
+ * Runs a counted, ranged query for one page and clamps the page to the real last page. A page
+ * past the end comes back from PostgREST either as zero rows or as a 416 (PGRST103); both are
+ * answered by showing the last page (or the first, when the table is empty). The query must
+ * ask for a count ('exact', or 'estimated' for big tables).
+ */
+export async function fetchClampedPage<T>(
+  page: number,
+  run: (from: number, to: number) => PromiseLike<PageResponse<T>>,
+  pageSize: number = PAGE_SIZE,
+): Promise<Result<Paged<T>>> {
+  let current = Math.max(1, page);
+  let res = await run(...rangeArgs(current, pageSize));
+  if (res.error?.code === 'PGRST103' && current > 1) {
+    current = 1;
+    res = await run(...rangeArgs(current, pageSize));
+  }
+  if (res.error) return failure(res.error);
+  const total = res.count;
+  if ((res.data ?? []).length === 0 && total !== null && total > 0) {
+    const last = clampPage(current, total, pageSize);
+    if (last !== current) {
+      current = last;
+      res = await run(...rangeArgs(current, pageSize));
+      if (res.error) return failure(res.error);
+    }
+  }
+  return ok(toPaged(res.data, res.count, current, pageSize));
+}
+
+function rangeArgs(page: number, pageSize: number): [number, number] {
+  const { from, to } = pageRange(page, pageSize);
+  return [from, to];
+}
+
 const FETCH_CHUNK = 1000;
 const FETCH_MAX_PAGES = 20;
 

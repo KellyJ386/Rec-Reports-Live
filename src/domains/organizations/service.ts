@@ -4,7 +4,7 @@
 import { createClient } from '@/lib/supabase/server';
 import type { Tables } from '@/lib/supabase/database.types';
 import { failure, ok, requireChanged, type Result } from '@/lib/db-errors';
-import { fetchAllRows, pageRange, toPaged, type Paged } from '@/lib/paging';
+import { fetchAllRows, fetchClampedPage, type Paged } from '@/lib/paging';
 import type {
   LocationCreate,
   LocationUpdate,
@@ -28,17 +28,16 @@ const LOCATION_CONFLICT = 'A location with that name or code already exists.';
 /** One page of locations, archived ones last. */
 export async function listLocations(orgId: string, page: number): Promise<Result<Paged<Location>>> {
   const supabase = await createClient();
-  const { from, to } = pageRange(page);
-  const { data, count, error } = await supabase
-    .from('locations')
-    .select(LOCATION_COLUMNS, { count: 'exact' })
-    .eq('organization_id', orgId)
-    .order('archived_at', { ascending: true, nullsFirst: true })
-    .order('name')
-    .order('id')
-    .range(from, to);
-  if (error) return failure(error);
-  return ok(toPaged(data, count, page));
+  return fetchClampedPage(page, (from, to) =>
+    supabase
+      .from('locations')
+      .select(LOCATION_COLUMNS, { count: 'exact' })
+      .eq('organization_id', orgId)
+      .order('archived_at', { ascending: true, nullsFirst: true })
+      .order('name')
+      .order('id')
+      .range(from, to),
+  );
 }
 
 /** Every location, for pickers and name lookups. Read in chunks, never truncated. */

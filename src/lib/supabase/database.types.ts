@@ -928,6 +928,19 @@ export type Database = {
         }
         Returns: string
       }
+      person_effective_permission: {
+        Args: {
+          p_organization_id: string
+          p_person_id: string
+          p_location_id: string | null
+          p_module_key: string
+        }
+        Returns: Database["public"]["Enums"]["permission_level"]
+      }
+      replace_role_assignment: {
+        Args: { p_assignment_id: string; p_role_id: string; p_location_id: string | null }
+        Returns: string
+      }
       update_own_profile: {
         Args: { p_organization_id: string; p_preferred_name: string | null; p_phone: string | null }
         Returns: string

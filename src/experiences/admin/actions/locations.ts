@@ -73,7 +73,8 @@ export async function archiveLocationAction(
   const orgId = await activeOrgId();
   const id = guid(formData, 'id');
   if (!id) return bad(formData, BAD_ID);
-  await requireAdmin(orgId, id);
+  // Archiving a location is organization-scope: a location admin cannot do it.
+  await requireAdmin(orgId);
   if (!confirmed(formData)) return bad(formData, NOT_CONFIRMED);
   const result = await setLocationArchived(orgId, id, true);
   if (result.ok) {
@@ -90,7 +91,7 @@ export async function restoreLocationAction(
   const orgId = await activeOrgId();
   const id = guid(formData, 'id');
   if (!id) return bad(formData, BAD_ID);
-  await requireAdmin(orgId, id);
+  await requireAdmin(orgId);
   const result = await setLocationArchived(orgId, id, false);
   if (result.ok) {
     revalidatePath('/app/admin/locations');

@@ -4,8 +4,8 @@
 import { createClient } from '@/lib/supabase/server';
 import type { Tables } from '@/lib/supabase/database.types';
 import { fail, failure, ok, requireChanged, type Result } from '@/lib/db-errors';
-import { fetchAllRows, pageRange, toPaged, type Paged } from '@/lib/paging';
-import { displayName, type PermissionLevel } from './logic';
+import { fetchAllRows, fetchClampedPage, type Paged } from '@/lib/paging';
+import { displayName, effectiveLevelKey, levelExceeds, type PermissionLevel } from './logic';
 import type {
   JobTitleCreate,
   JobTitleUpdate,
@@ -39,7 +39,7 @@ export type PersonAssignment = {
   id: string;
   role_id: string;
   location_id: string | null;
-  role: { key: string; name: string; rank: number } | null;
+  role: { key: string; name: string; rank: number; archived_at: string | null } | null;
 };
 export type PersonJobTitleRow = {
   id: string;
@@ -58,7 +58,9 @@ export type AccountStatus = 'active' | 'disabled' | 'none';
 const PERSON_COLUMNS =
   'id, first_name, last_name, preferred_name, email, phone, employee_number, archived_at';
 const ROLE_COLUMNS = 'id, organization_id, key, name, description, rank, archived_at';
-const NUMBER_CONFLICT = 'Someone in this organization already has that employee number.';
+const NUMBER_CONFLICT = 'That employee number is already in use.';
+
+const EFFECTIVE_BATCH = 8;
 
 // ---- people ----
 
@@ -87,33 +89,36 @@ export async function listPeople(
   query: PeopleQuery,
 ): Promise<Result<Paged<Person>>> {
   const supabase = await createClient();
-  const { from, to } = pageRange(query.page);
 
-  let rows: Person[] | null;
-  let total: number | null;
   if (query.locationId) {
-    let q = supabase
-      .from('people')
-      .select(`${PERSON_COLUMNS}, role_assignments!inner(location_id)`, { count: 'exact' })
-      .eq('organization_id', orgId)
-      .eq('role_assignments.location_id', query.locationId);
-    if (query.status === 'active') q = q.is('archived_at', null);
-    if (query.status === 'archived') q = q.not('archived_at', 'is', null);
-    for (const w of query.words) q = q.or(wordFilter(w));
-    const res = await q.order('last_name').order('first_name').order('id').range(from, to);
-    if (res.error) return failure(res.error);
-    rows = (res.data ?? []).map((r) => ({
-      id: r.id,
-      first_name: r.first_name,
-      last_name: r.last_name,
-      preferred_name: r.preferred_name,
-      email: r.email,
-      phone: r.phone,
-      employee_number: r.employee_number,
-      archived_at: r.archived_at,
-    }));
-    total = res.count;
-  } else {
+    const locationId = query.locationId;
+    const res = await fetchClampedPage(query.page, (from, to) => {
+      let q = supabase
+        .from('people')
+        .select(`${PERSON_COLUMNS}, role_assignments!inner(location_id)`, { count: 'exact' })
+        .eq('organization_id', orgId)
+        .eq('role_assignments.location_id', locationId);
+      if (query.status === 'active') q = q.is('archived_at', null);
+      if (query.status === 'archived') q = q.not('archived_at', 'is', null);
+      for (const w of query.words) q = q.or(wordFilter(w));
+      return q.order('last_name').order('first_name').order('id').range(from, to);
+    });
+    if (!res.ok) return res;
+    return ok({
+      ...res.data,
+      rows: res.data.rows.map((r) => ({
+        id: r.id,
+        first_name: r.first_name,
+        last_name: r.last_name,
+        preferred_name: r.preferred_name,
+        email: r.email,
+        phone: r.phone,
+        employee_number: r.employee_number,
+        archived_at: r.archived_at,
+      })),
+    });
+  }
+  return fetchClampedPage(query.page, (from, to) => {
     let q = supabase
       .from('people')
       .select(PERSON_COLUMNS, { count: 'exact' })
@@ -121,12 +126,8 @@ export async function listPeople(
     if (query.status === 'active') q = q.is('archived_at', null);
     if (query.status === 'archived') q = q.not('archived_at', 'is', null);
     for (const w of query.words) q = q.or(wordFilter(w));
-    const res = await q.order('last_name').order('first_name').order('id').range(from, to);
-    if (res.error) return failure(res.error);
-    rows = res.data;
-    total = res.count;
-  }
-  return ok(toPaged(rows, total, query.page));
+    return q.order('last_name').order('first_name').order('id').range(from, to);
+  });
 }
 
 export async function getPerson(orgId: string, id: string): Promise<Result<Person | null>> {
@@ -367,7 +368,7 @@ export async function listRoleAssignments(
   const rows = await fetchAllRows((from, to) =>
     supabase
       .from('role_assignments')
-      .select('id, role_id, location_id, roles(key, name, rank)')
+      .select('id, role_id, location_id, roles(key, name, rank, archived_at)')
       .eq('organization_id', orgId)
       .eq('person_id', personId)
       .order('created_at')
@@ -408,6 +409,58 @@ export async function removeRoleAssignment(orgId: string, id: string): Promise<R
     .select('id');
   if (error) return failure(error);
   return requireChanged(data);
+}
+
+/**
+ * Atomic change of one assignment's role and place, through the database function, so the
+ * person is never left with no role part-way. Returns the new assignment id.
+ */
+export async function replaceRoleAssignment(
+  assignmentId: string,
+  roleId: string,
+  locationId: string | null,
+): Promise<Result<{ id: string }>> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc('replace_role_assignment', {
+    p_assignment_id: assignmentId,
+    p_role_id: roleId,
+    p_location_id: locationId,
+  });
+  if (error) return failure(error, { unique: 'That person already has that role there.' });
+  if (!data) return fail('The role was not changed.');
+  return ok({ id: data });
+}
+
+/**
+ * Modules where `roleId`'s default level is above the caller's own effective level at that
+ * scope. The database refuses to grant such a role but only says "denied", so the admin
+ * screens call this after a refusal to explain it. Empty when nothing exceeds (or on error).
+ */
+export async function getRoleGrantExcess(
+  orgId: string,
+  roleId: string,
+  locationId: string | null,
+): Promise<string[]> {
+  const defaults = await listRoleDefaults([roleId]);
+  if (!defaults.ok) return [];
+  const supabase = await createClient();
+  const entries = Object.entries(defaults.data[roleId] ?? {});
+  const excess: string[] = [];
+  for (let i = 0; i < entries.length; i += EFFECTIVE_BATCH) {
+    const checks = await Promise.all(
+      entries.slice(i, i + EFFECTIVE_BATCH).map(async ([moduleKey, level]) => {
+        if (level === 'none') return null;
+        const { data, error } = await supabase.rpc('effective_permission', {
+          p_organization_id: orgId,
+          p_location_id: locationId,
+          p_module_key: moduleKey,
+        });
+        return !error && data && levelExceeds(level, data) ? moduleKey : null;
+      }),
+    );
+    for (const key of checks) if (key) excess.push(key);
+  }
+  return excess;
 }
 
 // ---- job titles ----
@@ -508,6 +561,42 @@ export async function removePersonJobTitle(orgId: string, id: string): Promise<R
 }
 
 // ---- permission overrides ----
+
+/** Effective level per "scope|module" key, or null when the database refused or failed. */
+export type EffectiveLevels = Map<string, PermissionLevel | null>;
+
+/**
+ * What the database says another person can do now (person_effective_permission), for each
+ * module in `moduleKeys` at each scope in `locationIds` (null = organization scope). That
+ * is modules x scopes calls, so callers pass only the modules and scopes they show. Calls
+ * run a few at a time. A refusal or error gives null for that cell ("not available").
+ */
+export async function getPersonEffectiveLevels(
+  orgId: string,
+  personId: string,
+  locationIds: ReadonlyArray<string | null>,
+  moduleKeys: readonly string[],
+): Promise<EffectiveLevels> {
+  const supabase = await createClient();
+  const scopes = [...new Set(locationIds)];
+  const modules = [...new Set(moduleKeys)];
+  const jobs = scopes.flatMap((loc) => modules.map((mod) => ({ loc, mod })));
+  const out: EffectiveLevels = new Map();
+  for (let i = 0; i < jobs.length; i += EFFECTIVE_BATCH) {
+    await Promise.all(
+      jobs.slice(i, i + EFFECTIVE_BATCH).map(async ({ loc, mod }) => {
+        const { data, error } = await supabase.rpc('person_effective_permission', {
+          p_organization_id: orgId,
+          p_person_id: personId,
+          p_location_id: loc,
+          p_module_key: mod,
+        });
+        out.set(effectiveLevelKey(loc, mod), error || !data ? null : data);
+      }),
+    );
+  }
+  return out;
+}
 
 export async function listUserPermissions(
   orgId: string,

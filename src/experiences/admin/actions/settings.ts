@@ -9,15 +9,7 @@ import {
   updateOrganization,
   updateOrganizationSettings,
 } from '@/domains/organizations';
-import {
-  activeOrgId,
-  bad,
-  fromResult,
-  good,
-  str,
-  zodProblem,
-  type AdminFormState,
-} from './helpers';
+import { activeOrgId, bad, good, str, zodProblem, type AdminFormState } from './helpers';
 
 export async function updateSettingsAction(
   _previous: AdminFormState,
@@ -35,11 +27,16 @@ export async function updateSettingsAction(
   if (!settings.success) return zodProblem(formData, settings.error);
 
   const renamed = await updateOrganization(orgId, name.data);
-  if (!renamed.ok) return bad(formData, renamed.message);
+  if (!renamed.ok) return bad(formData, `${renamed.message} Nothing was saved.`);
+  // The name is saved from here on. Refresh either way so the page shows what is stored.
+  revalidatePath('/app/admin', 'layout');
+  revalidatePath('/app');
   const saved = await updateOrganizationSettings(orgId, settings.data);
-  if (saved.ok) {
-    revalidatePath('/app/admin', 'layout');
-    revalidatePath('/app');
+  if (!saved.ok) {
+    return bad(
+      formData,
+      `The organization name was saved. The time zone and week start were not saved: ${saved.message}`,
+    );
   }
-  return saved.ok ? good('Saved.') : fromResult(formData, saved, 'Saved.');
+  return good('Saved.');
 }

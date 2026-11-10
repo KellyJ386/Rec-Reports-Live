@@ -1,9 +1,9 @@
-import { requireUser } from '@/lib/auth/session';
+import { requireRecentAuthentication } from '@/lib/auth/session';
 import { MIN_PASSWORD_LENGTH } from '@/lib/auth/schemas';
 import { ResetPasswordForm } from './form';
 
 export default async function ResetPasswordPage() {
-  await requireUser();
+  await requireRecentAuthentication();
   return (
     <main>
       <h1>Set a new password</h1>

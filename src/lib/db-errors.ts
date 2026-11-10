@@ -20,6 +20,15 @@ export type ErrorContext = {
   notFound?: string;
 };
 
+/**
+ * Row-level security refuses a role assignment without saying why (several rules can apply),
+ * so the admin screens work out the likely reasons themselves and use these sentences.
+ */
+export const GRANT_EXCEEDS_ERROR =
+  "That role includes access you don't have yourself, so you can't give it.";
+export const NO_ROLES_YET_ERROR =
+  'That person has no roles yet. Only an organization admin can give them their first one.';
+
 export const GENERIC_ERROR = 'Something went wrong. Try again.';
 export const DENIED_ERROR = 'You are not allowed to do that.';
 export const NO_CHANGE_ERROR =
@@ -40,6 +49,19 @@ const TRIGGER_MESSAGES: ReadonlyArray<readonly [string, string]> = [
   ['super_admin is granted', 'That role cannot be given here.'],
   ['not allowed to give that role', 'You are not allowed to give that role in that place.'],
   ['not allowed to add people', 'You are not allowed to add people here.'],
+  // Added with the security review migration (20261111000600); fragments match its texts.
+  [
+    "remove a person's last role",
+    "Only an organization admin can remove a person's last role. Archive the person instead.",
+  ],
+  [
+    'archive or restore a location',
+    'Only an organization admin can archive or restore a location.',
+  ],
+  ['must be given at a location', 'That role must be given at a location. Pick one.'],
+  ['role cannot be assigned', 'That role cannot be given here.'],
+  ['nothing to change', 'Nothing to change: that is already their role there.'],
+  ['not a member of this organization', 'That person is not in this organization.'],
   ['not signed in', 'Your session has expired. Sign in again.'],
   ['organization and role are required', 'Choose a role.'],
 ];

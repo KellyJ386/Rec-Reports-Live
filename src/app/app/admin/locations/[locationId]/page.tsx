@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { requireAdmin } from '@/lib/auth';
 import { requireAdminArea } from '@/experiences/admin/access';
 import { ActionForm } from '@/experiences/admin/action-form';
 import {
@@ -19,7 +20,9 @@ export default async function LocationPage({
   params: Promise<{ locationId: string }>;
 }) {
   const locationId = guidParam((await params).locationId);
-  const { orgId } = await requireAdminArea('canLocations');
+  const { orgId, access } = await requireAdminArea('canLocations');
+  // Admin of this location (or of the organization), not merely of some other location.
+  await requireAdmin(orgId, locationId);
   const result = await getLocation(orgId, locationId);
   if (!result.ok) return <ErrorMessage message={result.message} />;
   const location = result.data;
@@ -45,21 +48,27 @@ export default async function LocationPage({
         <LocationFields location={location} defaultTimezone={location.timezone} />
       </ActionForm>
 
-      <h2>{location.archived_at ? 'Restore' : 'Archive'}</h2>
-      {location.archived_at ? (
-        <ActionForm action={restoreLocationAction} submitLabel="Restore this location">
-          <input type="hidden" name="id" value={location.id} />
-        </ActionForm>
-      ) : (
+      {access.isOrgAdmin ? (
         <>
-          <p>An archived location is hidden from pickers. You can restore it later.</p>
-          <ConfirmAction
-            action={archiveLocationAction}
-            label="Archive this location"
-            question="Yes, archive this location"
-            fields={{ id: location.id }}
-          />
+          <h2>{location.archived_at ? 'Restore' : 'Archive'}</h2>
+          {location.archived_at ? (
+            <ActionForm action={restoreLocationAction} submitLabel="Restore this location">
+              <input type="hidden" name="id" value={location.id} />
+            </ActionForm>
+          ) : (
+            <>
+              <p>An archived location is hidden from pickers. You can restore it later.</p>
+              <ConfirmAction
+                action={archiveLocationAction}
+                label="Archive this location"
+                question="Yes, archive this location"
+                fields={{ id: location.id }}
+              />
+            </>
+          )}
         </>
+      ) : (
+        <p>Only an organization admin can archive or restore a location.</p>
       )}
     </main>
   );

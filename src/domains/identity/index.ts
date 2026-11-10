@@ -14,7 +14,9 @@ export {
   getAccountStatus,
   getPerson,
   getPersonNames,
+  getPersonEffectiveLevels,
   getRole,
+  getRoleGrantExcess,
   listJobTitles,
   listModules,
   listPeople,
@@ -26,6 +28,7 @@ export {
   removePersonJobTitle,
   removeRoleAssignment,
   removeUserPermission,
+  replaceRoleAssignment,
   setJobTitleArchived,
   setPersonArchived,
   setRoleArchived,
@@ -37,6 +40,7 @@ export {
 } from './service';
 export type {
   AccountStatus,
+  EffectiveLevels,
   JobTitle,
   ModuleRow,
   PeopleQuery,
@@ -49,10 +53,10 @@ export type {
 export {
   assignableRoles,
   assignmentRank,
-  computeEffectiveLevel,
   displayName,
-  levelAtLeast,
-  maxLevel,
+  effectiveLevelKey,
+  isLastActiveAssignment,
+  levelExceeds,
   scopeProblem,
 } from './logic';
-export type { AccessAssignment, AccessOverride, PermissionLevel, RoleDefaults } from './logic';
+export type { PermissionLevel } from './logic';

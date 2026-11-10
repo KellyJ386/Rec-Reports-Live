@@ -5,6 +5,7 @@ import { ActionForm } from '@/experiences/admin/action-form';
 import {
   addAssignmentAction,
   addPersonJobTitleAction,
+  changeAssignmentAction,
   removeAssignmentAction,
   removeOverrideAction,
   removePersonJobTitleAction,
@@ -16,14 +17,15 @@ import { ErrorMessage } from '@/experiences/admin/ui';
 import {
   assignableRoles,
   assignmentRank,
-  computeEffectiveLevel,
   displayName,
+  effectiveLevelKey,
   getPerson,
+  getPersonEffectiveLevels,
+  isLastActiveAssignment,
   listJobTitles,
   listModules,
   listPersonJobTitles,
   listRoleAssignments,
-  listRoleDefaults,
   listRoles,
   listUserPermissions,
   permissionLevelSchema,
@@ -62,23 +64,31 @@ export default async function PersonAccessPage({
   }
   const overrideRows = overrides?.ok ? overrides.data : [];
 
-  const roleIds = assignments.data.map((a) => a.role_id);
-  const defaults = await listRoleDefaults(roleIds);
-  if (!defaults.ok) return <ErrorMessage message={defaults.message} />;
-
   const locationName = new Map(locations.data.map((l) => [l.id, l.name]));
   const where = (id: string | null) =>
     id === null ? 'Whole organization' : (locationName.get(id) ?? 'A location');
   const moduleName = new Map(modules.data.map((m) => [m.key, m.name]));
-  const effectiveData = {
-    assignments: assignments.data.map((a) => ({ roleId: a.role_id, locationId: a.location_id })),
-    overrides: overrideRows.map((o) => ({
-      moduleKey: o.module_key,
-      locationId: o.location_id,
-      level: o.level,
-    })),
-    defaults: defaults.data,
-  };
+  const archivedLocationIds = new Set(
+    locations.data.filter((l) => l.archived_at !== null).map((l) => l.id),
+  );
+
+  // "Level now" comes from the database (person_effective_permission), never re-implemented
+  // here. Cells: the override modules x (organization scope, the person's assignment
+  // locations, the override locations). A refusal shows as "not available".
+  const scopes: Array<string | null> = [
+    null,
+    ...new Set([
+      ...assignments.data.flatMap((a) => (a.location_id ? [a.location_id] : [])),
+      ...overrideRows.flatMap((o) => (o.location_id ? [o.location_id] : [])),
+    ]),
+  ];
+  const overrideModules = [...new Set(overrideRows.map((o) => o.module_key))];
+  const levels =
+    overrideRows.length > 0
+      ? await getPersonEffectiveLevels(orgId, personId, scopes, overrideModules)
+      : new Map<string, null>();
+  const levelNow = (locationId: string | null, moduleKey: string): string =>
+    levels.get(effectiveLevelKey(locationId, moduleKey)) ?? 'not available';
   const name = displayName(person.data);
   const activeLocations = locations.data.filter((l) => l.archived_at === null);
 
@@ -99,6 +109,7 @@ export default async function PersonAccessPage({
               <th scope="col">Role</th>
               <th scope="col">Where</th>
               <th scope="col">Rank</th>
+              {access.canPeopleAdmin ? <th scope="col">Change</th> : null}
               {access.canPeopleAdmin ? <th scope="col">Remove</th> : null}
             </tr>
           </thead>
@@ -110,11 +121,55 @@ export default async function PersonAccessPage({
                 <td>{a.role ? assignmentRank(a.role.rank, a.location_id) : ''}</td>
                 {access.canPeopleAdmin ? (
                   <td>
+                    <details>
+                      <summary>Change</summary>
+                      <ActionForm action={changeAssignmentAction} submitLabel="Save change">
+                        <input type="hidden" name="id" value={a.id} />
+                        <input type="hidden" name="person_id" value={personId} />
+                        <p>
+                          <label>
+                            Role{' '}
+                            <select name="role_id" required defaultValue={a.role_id}>
+                              {assignableRoles(roles.data).map((r) => (
+                                <option key={r.id} value={r.id}>
+                                  {r.name} (rank {r.rank})
+                                </option>
+                              ))}
+                            </select>
+                          </label>{' '}
+                          <label>
+                            Where{' '}
+                            <select name="location_id" defaultValue={a.location_id ?? ''}>
+                              <option value="">Whole organization (admin role only)</option>
+                              {activeLocations.map((l) => (
+                                <option key={l.id} value={l.id}>
+                                  {l.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </p>
+                      </ActionForm>
+                    </details>
+                  </td>
+                ) : null}
+                {access.canPeopleAdmin ? (
+                  <td>
                     <ConfirmAction
                       action={removeAssignmentAction}
                       label="Remove"
-                      question={`Yes, remove ${a.role?.name ?? 'this role'} (${where(a.location_id)})`}
-                      fields={{ id: a.id, person_id: personId }}
+                      question={
+                        isLastActiveAssignment(assignments.data, a.id, archivedLocationIds)
+                          ? `Yes, remove ${a.role?.name ?? 'this role'} (${where(a.location_id)}). This is their last role: they will lose access to the organization.`
+                          : `Yes, remove ${a.role?.name ?? 'this role'} (${where(a.location_id)})`
+                      }
+                      fields={{
+                        id: a.id,
+                        person_id: personId,
+                        ...(isLastActiveAssignment(assignments.data, a.id, archivedLocationIds)
+                          ? { confirm_last: 'yes' }
+                          : {}),
+                      }}
                     />
                   </td>
                 ) : null}
@@ -235,8 +290,8 @@ export default async function PersonAccessPage({
           <p>
             An override replaces the role&apos;s default level for one module, either for the whole
             organization or for one location. It never gives access by itself: the person still
-            needs a role there. &quot;Level now&quot; is worked out here from the roles, defaults
-            and overrides shown on this page; the database makes the final decision.
+            needs a role there. &quot;Level now&quot; is what the database works out for this person
+            today, so it follows archived roles and locations too.
           </p>
           {overrideRows.length === 0 ? (
             <p>No overrides.</p>
@@ -257,7 +312,7 @@ export default async function PersonAccessPage({
                     <td>{moduleName.get(o.module_key) ?? o.module_key}</td>
                     <td>{where(o.location_id)}</td>
                     <td>{o.level}</td>
-                    <td>{computeEffectiveLevel(effectiveData, o.location_id, o.module_key)}</td>
+                    <td>{levelNow(o.location_id, o.module_key)}</td>
                     <td>
                       <ConfirmAction
                         action={removeOverrideAction}
@@ -271,6 +326,33 @@ export default async function PersonAccessPage({
               </tbody>
             </table>
           )}
+          {overrideModules.length > 0 ? (
+            <>
+              <h3>Level now where they work</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Module</th>
+                    {scopes.map((loc) => (
+                      <th scope="col" key={loc ?? 'org'}>
+                        {where(loc)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {overrideModules.map((m) => (
+                    <tr key={m}>
+                      <td>{moduleName.get(m) ?? m}</td>
+                      {scopes.map((loc) => (
+                        <td key={loc ?? 'org'}>{levelNow(loc, m)}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          ) : null}
           <h3>Set an override</h3>
           <p>Setting one for a module and place that already has an override changes it.</p>
           <ActionForm action={setOverrideAction} submitLabel="Save override">

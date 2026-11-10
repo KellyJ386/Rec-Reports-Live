@@ -32,15 +32,17 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: dummy-publishable-key
           SUPABASE_SERVICE_ROLE_KEY: dummy-service-role-key
+          SITE_URL: http://localhost:3000
 
   database:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # TODO: pin every `uses:` action to a commit SHA once someone with GitHub access can look them up.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 3.1.0
       - run: supabase db start
       - run: supabase test db
 

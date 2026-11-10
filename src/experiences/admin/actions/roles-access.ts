@@ -6,11 +6,21 @@ import { revalidatePath } from 'next/cache';
 import { requireAdmin, requireModulePermission } from '@/lib/auth';
 import { keyFromName, toInt, blankToNull } from '@/lib/text';
 import {
+  DENIED_ERROR,
+  GRANT_EXCEEDS_ERROR,
+  NO_ROLES_YET_ERROR,
+  type Result,
+} from '@/lib/db-errors';
+import { moduleKeySchema } from '@/lib/auth/schemas';
+import { getLocation, listAllLocations } from '@/domains/organizations';
+import {
   addPersonJobTitle,
   addRoleAssignment,
   createJobTitle,
   createRole,
   getRole,
+  getRoleGrantExcess,
+  isLastActiveAssignment,
   jobTitleCreateSchema,
   jobTitleUpdateSchema,
   listPersonJobTitles,
@@ -20,6 +30,7 @@ import {
   personJobTitleCreateSchema,
   removePersonJobTitle,
   removeRoleAssignment,
+  replaceRoleAssignment,
   removeUserPermission,
   roleAssignmentCreateSchema,
   roleCreateSchema,
@@ -56,6 +67,56 @@ function refreshPerson(personId: string) {
 
 // ---- role assignments ----
 
+/**
+ * Why a role cannot be given at a place, as a plain sentence, or null when it can. The role
+ * and location are loaded through the organization-filtered services, so another
+ * organization's ids are "not found".
+ */
+/**
+ * A refusal from row-level security is just "denied". After one on a role assignment, work out
+ * the likely reason so the message is useful: the role includes access the caller does not
+ * have, or the person has no roles yet (only an organization admin can give the first one).
+ */
+async function explainAssignmentDenial(
+  orgId: string,
+  personId: string,
+  roleId: string,
+  locationId: string | null,
+  result: Result<unknown>,
+): Promise<Result<unknown>> {
+  if (result.ok || result.message !== DENIED_ERROR) return result;
+  if ((await getRoleGrantExcess(orgId, roleId, locationId)).length > 0) {
+    return { ok: false, message: GRANT_EXCEEDS_ERROR };
+  }
+  const existing = await listRoleAssignments(orgId, personId);
+  if (existing.ok && existing.data.length === 0) {
+    return { ok: false, message: NO_ROLES_YET_ERROR };
+  }
+  return result;
+}
+
+async function assignmentTargetProblem(
+  orgId: string,
+  roleId: string,
+  locationId: string | null,
+): Promise<string | null> {
+  const role = await getRole(orgId, roleId);
+  if (!role.ok) return role.message;
+  if (!role.data) return 'Pick a role.';
+  if (role.data.archived_at) return 'That role is archived, so it cannot be given to anyone.';
+  const scope = scopeProblem(role.data.key, role.data.organization_id === null, locationId);
+  if (scope) return scope;
+  if (locationId !== null) {
+    const location = await getLocation(orgId, locationId);
+    if (!location.ok) return location.message;
+    if (!location.data) return BAD_ID;
+    if (location.data.archived_at) {
+      return 'That location is archived. Restore it first, or pick another location.';
+    }
+  }
+  return null;
+}
+
 export async function addAssignmentAction(
   _previous: AdminFormState,
   formData: FormData,
@@ -69,10 +130,7 @@ export async function addAssignmentAction(
   if (locationId === undefined) return bad(formData, BAD_ID);
   await requireModulePermission(orgId, locationId, MODULE, 'admin');
 
-  const role = await getRole(orgId, roleId);
-  if (!role.ok) return bad(formData, role.message);
-  if (!role.data) return bad(formData, 'Pick a role.');
-  const problem = scopeProblem(role.data.key, role.data.organization_id === null, locationId);
+  const problem = await assignmentTargetProblem(orgId, roleId, locationId);
   if (problem) return bad(formData, problem);
 
   const parsed = roleAssignmentCreateSchema.safeParse({
@@ -82,9 +140,52 @@ export async function addAssignmentAction(
     location_id: locationId,
   });
   if (!parsed.success) return zodProblem(formData, parsed.error);
-  const result = await addRoleAssignment(parsed.data);
+  const result = await explainAssignmentDenial(
+    orgId,
+    personId,
+    roleId,
+    locationId,
+    await addRoleAssignment(parsed.data),
+  );
   if (result.ok) refreshPerson(personId);
   return fromResult(formData, result, 'Role added.');
+}
+
+/** Changes one assignment's role and place in a single database call (never zero roles in between). */
+export async function changeAssignmentAction(
+  _previous: AdminFormState,
+  formData: FormData,
+): Promise<AdminFormState> {
+  const orgId = await activeOrgId();
+  const id = guid(formData, 'id');
+  const personId = guid(formData, 'person_id');
+  const roleId = guid(formData, 'role_id');
+  const locationId = optionalGuid(formData, 'location_id');
+  if (!id || !personId) return bad(formData, BAD_ID);
+  if (!roleId) return bad(formData, 'Pick a role.');
+  if (locationId === undefined) return bad(formData, BAD_ID);
+  // The current scope comes from the stored row, not from the form.
+  const rows = await listRoleAssignments(orgId, personId);
+  if (!rows.ok) return bad(formData, rows.message);
+  const row = rows.data.find((r) => r.id === id);
+  if (!row) return bad(formData, BAD_ID);
+  await requireModulePermission(orgId, row.location_id, MODULE, 'admin');
+  await requireModulePermission(orgId, locationId, MODULE, 'admin');
+
+  const problem = await assignmentTargetProblem(orgId, roleId, locationId);
+  if (problem) return bad(formData, problem);
+  if (roleId === row.role_id && locationId === row.location_id) {
+    return bad(formData, 'Nothing to change: that is already their role there.');
+  }
+  const result = await explainAssignmentDenial(
+    orgId,
+    personId,
+    roleId,
+    locationId,
+    await replaceRoleAssignment(id, roleId, locationId),
+  );
+  if (result.ok) refreshPerson(personId);
+  return fromResult(formData, result, 'Role changed.');
 }
 
 export async function removeAssignmentAction(
@@ -102,6 +203,18 @@ export async function removeAssignmentAction(
   if (!row) return bad(formData, BAD_ID);
   await requireModulePermission(orgId, row.location_id, MODULE, 'admin');
   if (!confirmed(formData)) return bad(formData, NOT_CONFIRMED);
+
+  // Removing the last active role locks the person out of the organization: the page asks
+  // for a separate, explicit confirmation and the server checks that it was given.
+  const locations = await listAllLocations(orgId, { includeArchived: true });
+  if (!locations.ok) return bad(formData, locations.message);
+  const archived = new Set(locations.data.filter((l) => l.archived_at).map((l) => l.id));
+  if (isLastActiveAssignment(rows.data, id, archived) && formData.get('confirm_last') !== 'yes') {
+    return bad(
+      formData,
+      'This is their last role. Removing it means they will lose access to the organization. Reload the page and confirm that.',
+    );
+  }
   const result = await removeRoleAssignment(orgId, id);
   if (result.ok) refreshPerson(personId);
   return fromResult(formData, result, 'Role removed.');
@@ -344,26 +457,32 @@ export async function saveRoleDefaultsAction(
   const roleId = guid(formData, 'id');
   if (!roleId) return bad(formData, BAD_ID);
 
-  const changes: Array<{ moduleKey: string; level: 'none' | 'view' | 'edit' | 'admin' }> = [];
+  // One change per module, keyed by module key. A repeated key is ignored (first one wins).
+  const changes = new Map<string, 'none' | 'view' | 'edit' | 'admin'>();
   for (const [name, value] of formData.entries()) {
     if (!name.startsWith('level:') || typeof value !== 'string') continue;
-    const level = permissionLevelSchema.safeParse(value);
     const moduleKey = name.slice('level:'.length);
-    if (!level.success || !/^[a-z][a-z0-9_]{0,62}$/.test(moduleKey)) return bad(formData, BAD_ID);
+    const key = moduleKeySchema.safeParse(moduleKey);
+    const level = permissionLevelSchema.safeParse(value);
+    if (!key.success || !level.success) return bad(formData, BAD_ID);
+    if (changes.has(key.data)) continue;
     // Only send levels the person changed (the form also posts what was there before).
-    if (blankToNull(formData.get(`was:${moduleKey}`)) === level.data) continue;
-    changes.push({ moduleKey, level: level.data });
+    if (blankToNull(formData.get(`was:${key.data}`)) === level.data) continue;
+    changes.set(key.data, level.data);
   }
-  if (changes.length === 0) return bad(formData, 'No levels were changed.');
+  if (changes.size === 0) return bad(formData, 'No levels were changed.');
 
+  const total = changes.size;
   let saved = 0;
-  for (const change of changes) {
-    const result = await setRoleDefault(orgId, roleId, change.moduleKey, change.level);
+  for (const [moduleKey, level] of changes) {
+    const result = await setRoleDefault(orgId, roleId, moduleKey, level);
     if (!result.ok) {
       revalidatePath(`/app/admin/roles/${roleId}`);
       return bad(
         formData,
-        saved > 0 ? `${result.message} (${saved} earlier change(s) were saved.)` : result.message,
+        saved === 0
+          ? `${result.message} Nothing was saved.`
+          : `${result.message} ${saved} of ${total} change(s) were saved; the rest were not. Reload the page to see which.`,
       );
     }
     saved += 1;

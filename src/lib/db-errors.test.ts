@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   DENIED_ERROR,
   GENERIC_ERROR,
+  GRANT_EXCEEDS_ERROR,
   NO_CHANGE_ERROR,
+  NO_ROLES_YET_ERROR,
   mapDbError,
   requireChanged,
 } from './db-errors';
@@ -78,5 +80,43 @@ describe('requireChanged', () => {
   });
   it('succeeds with the row count', () => {
     expect(requireChanged([{ id: 1 }])).toEqual({ ok: true, data: 1 });
+  });
+});
+
+describe('mapDbError: security review refusals', () => {
+  it('explains the last-role and location archive refusals from the migration', () => {
+    expect(
+      mapDbError({
+        code: '42501',
+        message:
+          "only an organization admin can remove a person's last role; archive the person instead",
+      }),
+    ).toMatch(/last role/);
+    expect(
+      mapDbError({
+        code: '42501',
+        message: 'only an organization admin can archive or restore a location',
+      }),
+    ).toBe('Only an organization admin can archive or restore a location.');
+  });
+  it('explains replace_role_assignment refusals', () => {
+    expect(mapDbError({ code: '22023', message: 'nothing to change' })).toMatch(
+      /Nothing to change/,
+    );
+    expect(mapDbError({ code: '23514', message: 'this role must be given at a location' })).toMatch(
+      /at a location/,
+    );
+    expect(mapDbError({ code: '23514', message: 'this role is archived' })).toMatch(/archived/);
+  });
+  it('keeps the grant refusal sentence exactly as agreed', () => {
+    expect(GRANT_EXCEEDS_ERROR).toBe(
+      "That role includes access you don't have yourself, so you can't give it.",
+    );
+    expect(NO_ROLES_YET_ERROR).toMatch(/no roles yet/);
+  });
+  it('falls back to the plain permission message for other 42501 refusals', () => {
+    expect(mapDbError({ code: '42501', message: 'permission denied for table people' })).toBe(
+      DENIED_ERROR,
+    );
   });
 });

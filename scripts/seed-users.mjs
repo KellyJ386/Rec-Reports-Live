@@ -2,8 +2,9 @@
 // Creates local login accounts for the mock people in supabase/seed.sql.
 //
 // For every person with an email (in the seeded database), this:
-//   1. creates a confirmed auth user through the Admin API, or reuses the one that
-//      already exists with that email;
+//   1. creates a confirmed auth user through the Admin API. A user that already exists
+//      with that email is NOT linked unless it is email-confirmed AND --link-existing is
+//      passed (an outsider could have registered that email first); skipped users are listed;
 //   2. inserts the matching public.accounts row (organization + person -> user),
 //      skipping any person or user that already has one.
 //
@@ -19,11 +20,14 @@
 //
 //   node scripts/seed-users.mjs
 //   node scripts/seed-users.mjs --i-know-this-is-not-production   (any other URL)
+//   node scripts/seed-users.mjs --link-existing   (link confirmed users that already exist)
 
 import { createClient } from '@supabase/supabase-js';
+import { canLinkExistingUser } from './seed-users-guard.mjs';
 
 const REQUIRED = ['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'MOCK_USER_PASSWORD'];
 const FLAG = '--i-know-this-is-not-production';
+const LINK_EXISTING = process.argv.includes('--link-existing');
 
 function fail(message) {
   console.error(`seed-users: ${message}`);
@@ -66,10 +70,13 @@ async function ensureAuthUser(email) {
     email_confirm: true,
   });
   if (!error) return { user: data.user, created: true };
-  // Already registered: reuse it. Any other error stops the run.
+  // Already registered: link it only when it is confirmed and --link-existing was passed.
+  // Any other error stops the run.
   const existing = await findAuthUserByEmail(email);
-  if (existing) return { user: existing, created: false };
-  throw error;
+  if (!existing) throw error;
+  const decision = canLinkExistingUser(existing, LINK_EXISTING);
+  if (!decision.link) return { user: null, created: false, skipped: decision.reason };
+  return { user: existing, created: false };
 }
 
 const { data: people, error: peopleError } = await admin
@@ -82,9 +89,14 @@ const { data: people, error: peopleError } = await admin
 if (peopleError) fail(`could not read people: ${peopleError.message}`);
 
 const stats = { authCreated: 0, authReused: 0, accountCreated: 0, accountSkipped: 0 };
+const skippedUsers = [];
 
 for (const person of people) {
-  const { user, created } = await ensureAuthUser(person.email);
+  const { user, created, skipped } = await ensureAuthUser(person.email);
+  if (!user) {
+    skippedUsers.push(`${person.email} (${skipped})`);
+    continue;
+  }
   if (created) stats.authCreated++;
   else stats.authReused++;
 
@@ -114,3 +126,7 @@ console.log(
   `seed-users: ${people.length} people; auth users created ${stats.authCreated}, reused ${stats.authReused}; ` +
     `accounts created ${stats.accountCreated}, already present ${stats.accountSkipped}.`,
 );
+if (skippedUsers.length > 0) {
+  console.log(`seed-users: skipped ${skippedUsers.length} existing user(s), not linked:`);
+  for (const line of skippedUsers) console.log(`  - ${line}`);
+}

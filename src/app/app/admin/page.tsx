@@ -16,6 +16,12 @@ export default async function AdminIndexPage() {
             spaces, hours and closures
           </li>
         ) : null}
+        {access.canSpaces ? (
+          <li>
+            <Link href="/app/admin/spaces">Spaces and closures</Link>: the locations where you
+            manage spaces, hours and closures
+          </li>
+        ) : null}
         {access.canSpaceKinds ? (
           <li>
             <Link href="/app/admin/space-kinds">Space kinds</Link>: the kinds of space you can pick

@@ -9,6 +9,7 @@ import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getActiveOrganization, getSessionContext, requireOrgMember } from '@/lib/auth';
 import type { PermissionLevel } from '@/domains/identity';
+import { listAllLocations, type Location } from '@/domains/organizations';
 
 export type AdminAccess = {
   /** Admin role at organization scope (or platform admin). */
@@ -115,4 +116,24 @@ export async function requireAdminArea(area?: keyof AdminAccess): Promise<AdminC
 export async function requirePeopleAdmin(orgId: string): Promise<void> {
   await requireOrgMember(orgId);
   if (!(await getAdminAccess(orgId)).canPeopleAdmin) notFound();
+}
+
+/**
+ * Active locations where the caller has locations_spaces >= edit: every location when they
+ * hold it at organization scope, else the locations they are assigned to. Each one is checked
+ * with the database, so an override that lowers the level is respected. For the "Spaces" list
+ * that managers without an admin role use to reach their locations' spaces and closures.
+ */
+export async function getManageableSpaceLocations(
+  orgId: string,
+): Promise<{ ok: true; data: Location[] } | { ok: false; message: string }> {
+  const all = await listAllLocations(orgId);
+  if (!all.ok) return all;
+  const orgWide = await hasPermission(orgId, null, 'locations_spaces', 'edit');
+  const mine = new Set(await myLocationIds(orgId));
+  const candidates = orgWide ? all.data : all.data.filter((l) => mine.has(l.id));
+  const checks = await Promise.all(
+    candidates.map((l) => hasPermission(orgId, l.id, 'locations_spaces', 'edit')),
+  );
+  return { ok: true, data: candidates.filter((_, i) => checks[i]) };
 }

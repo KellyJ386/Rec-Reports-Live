@@ -1,6 +1,42 @@
 import { z } from 'zod';
 
+function tryUrl(v: string): URL | null {
+  try {
+    return new URL(v);
+  } catch {
+    return null;
+  }
+}
+
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+
+/**
+ * The public origin of this app, e.g. https://app.example.com. Used to build links that
+ * leave the app (password reset emails), so it comes from configuration and never from
+ * request headers. Must be a bare origin: http(s), no credentials, path, query or hash.
+ * Plain http is only accepted for localhost. Normalised to the origin (no trailing slash).
+ */
+export const siteUrlSchema = z
+  .url({ protocol: /^https?$/ })
+  .refine((v) => {
+    const u = tryUrl(v);
+    return (
+      u !== null &&
+      u.username === '' &&
+      u.password === '' &&
+      (u.pathname === '/' || u.pathname === '') &&
+      u.search === '' &&
+      u.hash === ''
+    );
+  }, 'SITE_URL must be an origin only, such as https://app.example.com')
+  .refine((v) => {
+    const u = tryUrl(v);
+    return u !== null && (u.protocol === 'https:' || LOCAL_HOSTS.includes(u.hostname));
+  }, 'SITE_URL must use https (http is only allowed for localhost)')
+  .transform((v) => new URL(v).origin);
+
 export const serverEnvSchema = z.object({
+  SITE_URL: siteUrlSchema,
   NEXT_PUBLIC_SUPABASE_URL: z.url(),
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
@@ -29,4 +65,9 @@ export function getPublicEnv(): PublicEnv {
 /** All values, including secrets. Server only: never import this in a client component. */
 export function getServerEnv(): ServerEnv {
   return serverEnvSchema.parse(process.env);
+}
+
+/** The configured site origin. Server only. Throws when SITE_URL is missing or invalid. */
+export function getSiteUrl(): string {
+  return siteUrlSchema.parse(process.env.SITE_URL);
 }

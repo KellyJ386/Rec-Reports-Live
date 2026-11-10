@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireModulePermission } from '@/lib/auth';
 import { blankToNull, keyFromName, toInt } from '@/lib/text';
-import { zonedLocalToUtc } from '@/lib/time';
+import { ISO_WEEKDAYS, zonedLocalToUtc } from '@/lib/time';
 import { getLocation } from '@/domains/organizations';
 import {
   addClosure,
@@ -48,6 +48,9 @@ async function spaceScope(formData: FormData) {
   const locationId = guid(formData, 'location_id');
   if (!locationId) return null;
   await requireModulePermission(orgId, locationId, MODULE, 'edit');
+  // The guard answers for the id as given; make sure it is a location of this organization.
+  const location = await getLocation(orgId, locationId);
+  if (!location.ok || !location.data) return null;
   return { orgId, locationId };
 }
 
@@ -61,6 +64,10 @@ function capacity(formData: FormData): number | null | 'bad' {
   if (text === null) return null;
   const n = toInt(text);
   return n === null ? 'bad' : n;
+}
+
+function dayNames(days: readonly number[]): string {
+  return days.map((d) => ISO_WEEKDAYS.find((w) => w.value === d)?.label ?? `day ${d}`).join(', ');
 }
 
 // ---- spaces ----
@@ -167,8 +174,9 @@ export async function addHoursAction(
   });
   if (!times) return bad(formData, 'Enter an opening and a closing time.');
 
-  let added = 0;
-  for (const day of [...new Set(days)].sort((a, b) => a - b)) {
+  const addedDays: number[] = [];
+  const dayList = [...new Set(days)].sort((a, b) => a - b);
+  for (const day of dayList) {
     const parsed = spaceHourCreateSchema.safeParse({
       organization_id: scope.orgId,
       location_id: scope.locationId,
@@ -182,15 +190,20 @@ export async function addHoursAction(
     const result = await addSpaceHours(parsed.data);
     if (!result.ok) {
       refresh(scope.locationId, spaceId);
+      const notAdded = dayList.filter((d) => !addedDays.includes(d));
       return bad(
         formData,
-        added > 0 ? `${result.message} (${added} earlier day(s) were added.)` : result.message,
+        addedDays.length > 0
+          ? `${result.message} Hours were added for ${dayNames(addedDays)}. They were not added for ${dayNames(notAdded)}.`
+          : `${result.message} No hours were added.`,
       );
     }
-    added += 1;
+    addedDays.push(day);
   }
   refresh(scope.locationId, spaceId);
-  return good(added === 1 ? 'Hours added.' : `Hours added for ${added} days.`);
+  return good(
+    addedDays.length === 1 ? 'Hours added.' : `Hours added for ${addedDays.length} days.`,
+  );
 }
 
 export async function removeHoursAction(

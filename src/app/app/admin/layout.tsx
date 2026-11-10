@@ -18,6 +18,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
                 <Link href="/app/admin/locations">Locations</Link>
               </li>
             ) : null}
+            {access.canSpaces ? (
+              <li>
+                <Link href="/app/admin/spaces">Spaces and closures</Link>
+              </li>
+            ) : null}
             {access.canSpaceKinds ? (
               <li>
                 <Link href="/app/admin/space-kinds">Space kinds</Link>

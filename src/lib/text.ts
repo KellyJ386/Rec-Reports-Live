@@ -17,8 +17,13 @@ export function toInt(value: FormDataEntryValue | null | undefined): number | nu
 /**
  * Search words that are safe to place inside a PostgREST filter value. Keeps letters, digits
  * and a few characters found in names and emails; drops everything that could change the
- * filter's meaning (commas, parentheses, quotes, wildcards, backslashes). At most 5 words.
+ * filter's meaning (commas, parentheses, quotes, wildcards, backslashes). Words shorter than
+ * MIN_SEARCH_WORD_LENGTH are dropped (a one-letter substring matches nearly everyone and makes
+ * the database scan), and at most MAX_SEARCH_WORDS words are used (each adds a filter clause).
  */
+export const MAX_SEARCH_WORDS = 3;
+export const MIN_SEARCH_WORD_LENGTH = 2;
+
 export function searchWords(raw: string | null | undefined): string[] {
   if (!raw) return [];
   return raw
@@ -26,8 +31,8 @@ export function searchWords(raw: string | null | undefined): string[] {
     .replace(/[^\p{L}\p{N}@.+'_-]+/gu, ' ')
     .split(' ')
     .map((w) => w.replace(/[.]+$/, ''))
-    .filter((w) => w.length > 0)
-    .slice(0, 5)
+    .filter((w) => w.length >= MIN_SEARCH_WORD_LENGTH)
+    .slice(0, MAX_SEARCH_WORDS)
     .map((w) => w.slice(0, 50));
 }
 

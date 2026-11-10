@@ -14,6 +14,7 @@ import {
   type Membership,
   type SessionContext,
 } from './context';
+import { hasRecentAuthentication } from './recent-auth';
 import { ACTIVE_ORG_COOKIE, selectActiveOrganization } from './active-org';
 
 export type AuthUser = { id: string; email: string | null };
@@ -35,6 +36,21 @@ export const requireUser = cache(async (): Promise<AuthUser> => {
   if (error || !data.user) redirect('/sign-in');
   return { id: data.user.id, email: data.user.email ?? null };
 });
+
+/**
+ * For /reset-password: the caller has a validated session that came from a recovery link or a
+ * recent sign-in (the JWT's `amr` claim, checked by getClaims), else a redirect to
+ * /forgot-password. Not cached: the action calls it again.
+ */
+export async function requireRecentAuthentication(): Promise<AuthUser> {
+  const user = await requireUser();
+  const supabase = await createClient();
+  const { data, error } = await supabase.auth.getClaims();
+  if (error || !hasRecentAuthentication(data?.claims, Math.floor(Date.now() / 1000))) {
+    redirect('/forgot-password');
+  }
+  return user;
+}
 
 /**
  * Who the caller is and what they hold, read from the database through the

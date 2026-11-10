@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import type { Database } from './database.types';
 import { cookies } from 'next/headers';
 import { getPublicEnv } from '@/lib/env';
+import { authCookieOptions } from './cookie-options';
 
 /**
  * Supabase client for Server Components, Server Actions and Route Handlers.
@@ -12,6 +13,7 @@ export async function createClient() {
   const env = getPublicEnv();
 
   return createServerClient<Database>(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
+    cookieOptions: authCookieOptions(),
     cookies: {
       getAll() {
         return cookieStore.getAll();

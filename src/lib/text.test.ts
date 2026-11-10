@@ -11,11 +11,16 @@ describe('searchWords', () => {
     const words = searchWords('a,b) or (id.eq.1 "x" %*\\');
     for (const w of words) expect(w).not.toMatch(/[,()"%*\\]/);
     expect(searchWords('),or(')).toEqual(['or']);
+    expect(searchWords('x,y')).toEqual([]);
   });
   it('handles empty input and caps the number of words', () => {
     expect(searchWords(undefined)).toEqual([]);
     expect(searchWords('   ')).toEqual([]);
-    expect(searchWords('a b c d e f g')).toHaveLength(5);
+    expect(searchWords('aa bb cc dd ee ff gg')).toEqual(['aa', 'bb', 'cc']);
+  });
+  it('drops one-letter words before counting', () => {
+    expect(searchWords('a b ana c lopez')).toEqual(['ana', 'lopez']);
+    expect(searchWords('a')).toEqual([]);
   });
 });
 

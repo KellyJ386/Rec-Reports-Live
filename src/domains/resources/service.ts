@@ -3,7 +3,7 @@
 import { createClient } from '@/lib/supabase/server';
 import type { Tables } from '@/lib/supabase/database.types';
 import { fail, failure, ok, requireChanged, type Result } from '@/lib/db-errors';
-import { fetchAllRows, pageRange, toPaged, type Paged } from '@/lib/paging';
+import { fetchAllRows, fetchClampedPage, type Paged } from '@/lib/paging';
 import { checkParent, overlapsExisting } from './logic';
 import type {
   SpaceClosureCreate,
@@ -246,17 +246,16 @@ export async function listClosures(
   page: number,
 ): Promise<Result<Paged<SpaceClosure>>> {
   const supabase = await createClient();
-  const { from, to } = pageRange(page);
-  const { data, count, error } = await supabase
-    .from('space_closures')
-    .select('id, space_id, starts_at, ends_at, reason', { count: 'exact' })
-    .eq('organization_id', orgId)
-    .eq('location_id', locationId)
-    .order('starts_at', { ascending: false })
-    .order('id')
-    .range(from, to);
-  if (error) return failure(error);
-  return ok(toPaged(data, count, page));
+  return fetchClampedPage(page, (from, to) =>
+    supabase
+      .from('space_closures')
+      .select('id, space_id, starts_at, ends_at, reason', { count: 'exact' })
+      .eq('organization_id', orgId)
+      .eq('location_id', locationId)
+      .order('starts_at', { ascending: false })
+      .order('id')
+      .range(from, to),
+  );
 }
 
 export async function addClosure(input: SpaceClosureCreate): Promise<Result<{ id: string }>> {

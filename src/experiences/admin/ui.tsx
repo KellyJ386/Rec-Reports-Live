@@ -11,17 +11,21 @@ export function Pager({
   total,
   pageSize,
   params = {},
+  approximate = false,
 }: {
   path: string;
   page: number;
   total: number;
   pageSize: number;
   params?: Record<string, string | undefined>;
+  /** The total is an estimate (large tables), so say "about". */
+  approximate?: boolean;
 }) {
   const pages = pageCount(total, pageSize);
   return (
     <nav aria-label="Pages">
       <p>
+        {approximate ? 'About ' : ''}
         {total} in total. Page {Math.min(page, pages)} of {pages}.{' '}
         {page > 1 ? (
           <Link href={buildHref(path, { ...params, page: page - 1 })}>Previous</Link>

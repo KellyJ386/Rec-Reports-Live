@@ -1,64 +1,12 @@
-// Pure logic for the identity domain. Mirrors the rules in docs/SECURITY.md so the admin
-// screens can show what a person's access works out to. The database function
-// effective_permission() is the authority; it only answers for the signed-in caller, so for
-// another person the screens compute the same rules from rows an admin may read.
+// Pure logic for the identity domain. What a person can actually do is decided by the database
+// (effective_permission / person_effective_permission); nothing here re-implements those rules.
 export type PermissionLevel = 'none' | 'view' | 'edit' | 'admin';
 
-const ORDER: Record<PermissionLevel, number> = { none: 0, view: 1, edit: 2, admin: 3 };
+const LEVEL_ORDER: Record<PermissionLevel, number> = { none: 0, view: 1, edit: 2, admin: 3 };
 
-export function maxLevel(a: PermissionLevel, b: PermissionLevel): PermissionLevel {
-  return ORDER[a] >= ORDER[b] ? a : b;
-}
-
-export function levelAtLeast(level: PermissionLevel, min: PermissionLevel): boolean {
-  return ORDER[level] >= ORDER[min];
-}
-
-export type AccessAssignment = { roleId: string; locationId: string | null };
-export type AccessOverride = {
-  moduleKey: string;
-  locationId: string | null;
-  level: PermissionLevel;
-};
-/** roleId -> moduleKey -> default level */
-export type RoleDefaults = Readonly<Record<string, Readonly<Record<string, PermissionLevel>>>>;
-
-/**
- * Effective level of one person for a module in a scope (locationId null = organization scope):
- * 1. no assignment covering the scope -> none
- * 2. an override for that module at that location -> its level
- * 3. an override for that module with no location -> its level
- * 4. the highest default among the roles covering the scope; none if there are none
- * An assignment covers organization scope only if it is organization scoped; it covers a
- * location if it is organization scoped or at that location. Platform admins are not modelled.
- */
-export function computeEffectiveLevel(
-  data: {
-    assignments: readonly AccessAssignment[];
-    overrides: readonly AccessOverride[];
-    defaults: RoleDefaults;
-  },
-  locationId: string | null,
-  moduleKey: string,
-): PermissionLevel {
-  const covering = data.assignments.filter(
-    (a) => a.locationId === null || (locationId !== null && a.locationId === locationId),
-  );
-  if (covering.length === 0) return 'none';
-
-  const exact = data.overrides.find(
-    (o) => o.moduleKey === moduleKey && o.locationId === locationId,
-  );
-  if (exact) return exact.level;
-  const orgWide = data.overrides.find((o) => o.moduleKey === moduleKey && o.locationId === null);
-  if (orgWide) return orgWide.level;
-
-  let best: PermissionLevel = 'none';
-  for (const a of covering) {
-    const level = data.defaults[a.roleId]?.[moduleKey];
-    if (level) best = maxLevel(best, level);
-  }
-  return best;
+/** True when `level` is higher than `limit` (none < view < edit < admin). */
+export function levelExceeds(level: PermissionLevel, limit: PermissionLevel): boolean {
+  return LEVEL_ORDER[level] > LEVEL_ORDER[limit];
 }
 
 /** Effective rank of one assignment: the role's rank, plus 10 at organization scope. */
@@ -92,4 +40,32 @@ export function displayName(p: {
 }): string {
   const first = p.preferred_name?.trim() ? p.preferred_name.trim() : p.first_name;
   return `${first} ${p.last_name}`.trim();
+}
+
+/**
+ * Whether removing assignment `id` would leave the person with no active assignment. An
+ * assignment is active when its role is not archived and, if location scoped, its location
+ * is not archived.
+ */
+export function isLastActiveAssignment(
+  assignments: ReadonlyArray<{
+    id: string;
+    location_id: string | null;
+    role: { archived_at?: string | null } | null;
+  }>,
+  id: string,
+  archivedLocationIds: ReadonlySet<string>,
+): boolean {
+  const active = assignments.filter(
+    (a) =>
+      a.role !== null &&
+      !a.role.archived_at &&
+      (a.location_id === null || !archivedLocationIds.has(a.location_id)),
+  );
+  return active.length > 0 && active.every((a) => a.id === id);
+}
+
+/** Map key for one cell of the effective-level table: a scope (null = organization) and a module. */
+export function effectiveLevelKey(locationId: string | null, moduleKey: string): string {
+  return `${locationId ?? 'org'}|${moduleKey}`;
 }

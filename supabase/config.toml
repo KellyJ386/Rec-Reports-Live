@@ -19,6 +19,26 @@ enabled = true
 sql_paths = ["./seed.sql"]
 
 [auth]
+# Hosted project settings to match (Dashboard > Authentication; config.toml only drives the
+# local stack and CI, it does not change the hosted project):
+#   - Sign In / Providers > "Allow new users to sign up": OFF (admins provision users)
+#   - Email provider stays ON (password sign-in); do not turn the provider itself off
+#   - Sign In / Providers > Email > minimum password length: 12
+#   - Email > "Secure password change": ON (recent sign-in needed to change a password)
+#   - URL Configuration: Site URL = the production URL; Redirect URLs = exact URLs only,
+#     no wildcards in production (for example https://<prod-host>/auth/confirm)
+#   - Set SITE_URL in the app environment to the same production URL
 enabled = true
 site_url = "http://localhost:3000"
-additional_redirect_urls = ["http://localhost:3000/**"]
+additional_redirect_urls = ["http://localhost:3000/auth/confirm"]
+# New accounts are created by admins (Admin API / create_person_with_assignment flow).
+# This blocks self sign-up for every provider; it does not block admin-created users.
+enable_signup = false
+minimum_password_length = 12
+
+[auth.email]
+# Keep the email provider on: password sign-in and password reset depend on it. Sign-up is
+# already blocked by [auth] enable_signup = false (auth.email.enable_signup is deprecated).
+enable_signup = true
+# A password change needs a recent sign-in or reauthentication.
+secure_password_change = true

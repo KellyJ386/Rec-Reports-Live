@@ -2,11 +2,11 @@
 
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { requireUser } from '@/lib/auth/session';
+import { requireRecentAuthentication } from '@/lib/auth/session';
 import { firstIssue, resetPasswordSchema, type FormState } from '@/lib/auth/schemas';
 
 export async function resetPassword(_prev: FormState, formData: FormData): Promise<FormState> {
-  await requireUser();
+  await requireRecentAuthentication();
   const parsed = resetPasswordSchema.safeParse({
     password: formData.get('password'),
     confirmPassword: formData.get('confirmPassword'),

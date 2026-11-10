@@ -40,7 +40,7 @@ export default async function PeoplePage({
       <form method="get" action="/app/admin/people">
         <p>
           <label>
-            Search by name, email or employee number{' '}
+            Search by name, email or employee number (up to 3 words, 2 letters or more){' '}
             <input type="search" name="q" defaultValue={q} maxLength={100} />
           </label>
         </p>
