@@ -5,7 +5,8 @@ import { getPublicEnv } from '@/lib/env';
 /**
  * Refreshes the Supabase auth session on each request and writes any updated
  * cookies to both the request and the response. Called from src/proxy.ts.
- * It does no access control: routes and RLS decide who sees what.
+ * It makes no access decision itself; it reports whether the token validated so
+ * src/proxy.ts can apply convenience redirects. Routes and RLS decide access.
  */
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -32,7 +33,7 @@ export async function updateSession(request: NextRequest) {
   );
 
   // Validates the token and triggers a refresh when it has expired.
-  await supabase.auth.getClaims();
+  const { data } = await supabase.auth.getClaims();
 
-  return response;
+  return { response, signedIn: Boolean(data?.claims?.sub) };
 }
