@@ -198,7 +198,7 @@ select pg_temp.act_as('u_orgadmin_a');
 select is(pg_temp.try($q$select public.create_person_with_assignment(pg_temp.id('org_a'), 'La', 'LocAdmin2', pg_temp.sys_role('admin'), pg_temp.id('loc_a2'))$q$), 'ok', 'positive: org admin A can onboard a location admin');
 select is(pg_temp.try($q$select public.create_person_with_assignment(pg_temp.id('org_a'), 'Oo', 'OrgAdmin3', pg_temp.sys_role('admin'), null)$q$), '42501', 'org admin A cannot onboard an org admin');
 select is((select count(*) from public.people where first_name = 'Oo'), 0::bigint, 'nothing left behind after the org-admin attempt');
-select is(pg_temp.try($q$select public.create_person_with_assignment(pg_temp.id('org_a'), 'Lb', 'OtherOrgLoc', pg_temp.sys_role('staff'), pg_temp.id('loc_b1'))$q$), '23503', 'org admin A cannot place someone at a location of org B (composite foreign key)');
+select is(pg_temp.try($q$select public.create_person_with_assignment(pg_temp.id('org_a'), 'Lb', 'OtherOrgLoc', pg_temp.sys_role('staff'), pg_temp.id('loc_b1'))$q$), '42501', 'org admin A cannot place someone at a location of org B (refused before any row exists)');
 select is((select count(*) from public.people where first_name = 'Lb'), 0::bigint, 'nothing left behind after the cross-org location attempt');
 select pg_temp.act_as('u_platform');
 select is(pg_temp.try($q$select public.create_person_with_assignment(pg_temp.id('org_a'), 'Pa', 'ByPlatform', pg_temp.sys_role('admin'), null)$q$), 'ok', 'positive: a platform admin can onboard an org admin');

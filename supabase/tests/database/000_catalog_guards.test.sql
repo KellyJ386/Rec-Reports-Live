@@ -19,7 +19,7 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(32);
+select plan(34);
 
 -- Guarded objects: ordinary relations and functions in public/private that do
 -- not belong to an extension.
@@ -254,15 +254,30 @@ select is((select coalesce(string_agg(sig, ', ' order by sig), '') from gf
            where prosecdef and nspname = 'public' and has_function_privilege('authenticated', oid, 'execute')
              and proname not in ('is_platform_admin', 'auth_org_ids', 'auth_location_ids', 'current_person_id', 'has_role',
                                  'actor_rank', 'effective_permission', 'has_permission',
-                                 'create_person_with_assignment', 'update_own_profile')),
+                                 'create_person_with_assignment', 'update_own_profile',
+                                 'person_effective_permission', 'replace_role_assignment')),
   '', 'only the reviewed SECURITY DEFINER functions in public are callable by authenticated through /rpc (add new ones here on purpose)');
 
 select is((select coalesce(string_agg(x, ', '), '') from unnest(array[
              'is_platform_admin', 'auth_org_ids', 'auth_location_ids', 'current_person_id', 'has_role',
              'actor_rank', 'effective_permission', 'has_permission',
-             'create_person_with_assignment', 'update_own_profile']) x
+             'create_person_with_assignment', 'update_own_profile',
+             'person_effective_permission', 'replace_role_assignment']) x
            where not exists (select 1 from gf where gf.nspname = 'public' and gf.proname = x and gf.prosecdef)),
   '', 'the /rpc allowlist has no stale entries');
+
+-- ---------------------------------------------------------------------------
+-- TRUNCATE
+-- ---------------------------------------------------------------------------
+select is((select coalesce(string_agg(t.relname, ', ' order by t.relname), '') from gtp t
+           where exists (select 1 from pg_trigger g where g.tgrelid = t.oid and g.tgname = 'zz_audit' and not g.tgisinternal)
+             and not exists (select 1 from pg_trigger g where g.tgrelid = t.oid and g.tgname = 'zz_audit_no_truncate' and not g.tgisinternal
+                             and g.tgfoid = 'private.tg_audit_no_truncate'::regproc and (g.tgtype & 2) <> 0 and (g.tgtype & 32) <> 0 and (g.tgtype & 1) = 0)),
+  '', 'every audited table has the BEFORE TRUNCATE guard trigger (private.enable_audit installs it)');
+
+select is((select coalesce(string_agg(t.relname, ', ' order by t.relname), '') from gtp t
+           where has_table_privilege('service_role', t.oid, 'truncate,trigger,references')),
+  '', 'service_role holds no TRUNCATE, TRIGGER or REFERENCES on any table in public');
 
 select * from finish();
 rollback;

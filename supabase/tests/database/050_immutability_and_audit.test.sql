@@ -3,7 +3,7 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(55 + 4 * (select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
+select plan(56 + 2 * (select count(*)::int from pg_trigger g where g.tgname = 'zz_audit' and not g.tgisinternal and g.tgrelid in (select c.oid from pg_class c where c.relnamespace = 'public'::regnamespace)) + 4 * (select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
     and c.relname not in ('audit_log', 'modules', 'platform_admins')));
 
 -- BEGIN SHARED FIXTURE: byte-identical in every fixture-using test file (check: see supabase/tests/database/000_catalog_guards.test.sql header notes).
@@ -208,8 +208,8 @@ select pg_temp.act_as('postgres');
 -- ===========================================================================
 select ok(has_table_privilege('authenticated', 'public.audit_log', 'select') and not has_table_privilege('authenticated', 'public.audit_log', 'insert,update,delete,truncate'),
   'authenticated: select on audit_log only');
-select ok(has_table_privilege('service_role', 'public.audit_log', 'select,insert') and not has_table_privilege('service_role', 'public.audit_log', 'update,delete,truncate'),
-  'service_role: select and insert on audit_log, nothing else');
+select ok(has_table_privilege('service_role', 'public.audit_log', 'select') and not has_table_privilege('service_role', 'public.audit_log', 'insert,update,delete,truncate,trigger,references'),
+  'service_role: select on audit_log, nothing else');
 select pg_temp.act_as('u_orgadmin_a');
 select is(pg_temp.try($q$update public.audit_log set action = 'insert'$q$), '42501', 'org admin A cannot update audit_log');
 select is(pg_temp.try($q$delete from public.audit_log$q$), '42501', 'org admin A cannot delete from audit_log');
@@ -224,14 +224,28 @@ set local role service_role;
 select is(pg_temp.try($q$update public.audit_log set action = 'insert'$q$), '42501', 'service_role cannot update audit_log');
 select is(pg_temp.try($q$delete from public.audit_log$q$), '42501', 'service_role cannot delete from audit_log');
 select is(pg_temp.try($q$truncate public.audit_log$q$), '42501', 'service_role cannot truncate audit_log');
-select is(pg_temp.try($q$insert into public.audit_log (actor_role, action, table_schema, table_name, row_id) values ('service_role', 'insert', 'public', 'sensitive_view', 'r1')$q$), 'ok',
-  'positive: service_role can append to audit_log');
+select is(pg_temp.try($q$insert into public.audit_log (actor_role, action, table_schema, table_name, row_id) values ('service_role', 'insert', 'public', 'sensitive_view', 'r1')$q$), '42501',
+  'service_role cannot insert into audit_log either (rows come only from the audit trigger)');
 select pg_temp.act_as('postgres');
 -- the owner is stopped by the trigger, not by privileges
 select throws_ok($q$update public.audit_log set action = 'delete'$q$, '42501', 'audit_log is append-only (UPDATE blocked)', 'the owner cannot update audit_log (trigger)');
 select throws_ok($q$delete from public.audit_log$q$, '42501', 'audit_log is append-only (DELETE blocked)', 'the owner cannot delete from audit_log (trigger)');
 select throws_ok($q$truncate public.audit_log$q$, '42501', 'audit_log is append-only (TRUNCATE blocked)', 'the owner cannot truncate audit_log (trigger)');
-select is((select count(*) from public.audit_log where table_name = 'sensitive_view' and row_id = 'r1'), 1::bigint, 'the appended row is there and unchanged');
+select is((select count(*) from public.audit_log where table_name = 'sensitive_view' and row_id = 'r1'), 0::bigint, 'and no forged row is there');
+
+-- ===========================================================================
+-- Nobody can TRUNCATE an audited table (generated from the catalog)
+-- ===========================================================================
+create temp view audited as
+  select c.relname from pg_trigger g join pg_class c on c.oid = g.tgrelid
+  where g.tgname = 'zz_audit' and not g.tgisinternal and c.relnamespace = 'public'::regnamespace;
+grant select on audited to public;
+set local role service_role;
+select is(pg_temp.try('truncate table public.' || quote_ident(a.relname)), '42501', 'service_role cannot truncate ' || a.relname) from pg_temp.audited a order by a.relname;
+select pg_temp.act_as('postgres');
+-- CASCADE so that foreign keys do not refuse first (0A000); the guard triggers then raise 42501.
+select is(pg_temp.try('truncate table public.' || quote_ident(a.relname) || ' cascade'), '42501', 'the owner cannot truncate ' || a.relname || ' (guard trigger)') from pg_temp.audited a order by a.relname;
+select ok((select bool_and(pg_temp.cnt(a.relname) > 0 or a.relname in ('platform_admins')) from pg_temp.audited a) , 'no audited table was emptied by those attempts');
 
 -- ===========================================================================
 -- A tenant write produces exactly one audit row, with the right actor, org and location

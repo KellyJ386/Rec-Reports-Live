@@ -5,7 +5,7 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(94);
+select plan(96);
 
 -- BEGIN SHARED FIXTURE: byte-identical in every fixture-using test file (check: see supabase/tests/database/000_catalog_guards.test.sql header notes).
 --   org A: locations A1, A2;  org B: location B1.
@@ -157,7 +157,15 @@ insert into public.person_job_titles (id, organization_id, person_id, job_title_
 insert into public.people (id, organization_id, first_name, last_name) values
   (pg_temp.id('p_orgadmin2_a'), pg_temp.id('org_a'), 'Otto', 'OrgAdmin2'),
   (pg_temp.id('p_t1'), pg_temp.id('org_a'), 'Tee', 'One'), (pg_temp.id('p_t2'), pg_temp.id('org_a'), 'Tee', 'Two'),
-  (pg_temp.id('p_t3'), pg_temp.id('org_a'), 'Tee', 'Three');
+  (pg_temp.id('p_t3'), pg_temp.id('org_a'), 'Tee', 'Three'),
+  (pg_temp.id('p_t4'), pg_temp.id('org_a'), 'Tee', 'Four'), (pg_temp.id('p_t5'), pg_temp.id('org_a'), 'Tee', 'Five');
+-- Since the review fixes a location admin can no longer attach a FIRST role to a person nobody at
+-- their location can see, so the targets of the grant tests start with an assignment (as postgres).
+insert into public.role_assignments (organization_id, person_id, role_id, location_id) values
+  (pg_temp.id('org_a'), pg_temp.id('p_t1'), pg_temp.sys_role('staff'), pg_temp.id('loc_a1')),
+  (pg_temp.id('org_a'), pg_temp.id('p_t4'), pg_temp.sys_role('staff'), pg_temp.id('loc_a1')),
+  (pg_temp.id('org_a'), pg_temp.id('p_t4'), pg_temp.id('role_custom_a'), pg_temp.id('loc_a1')),
+  (pg_temp.id('org_a'), pg_temp.id('p_t5'), pg_temp.sys_role('staff'), pg_temp.id('loc_a1'));
 insert into public.role_assignments (id, organization_id, person_id, role_id, location_id)
 values (pg_temp.id('ra_orgadmin2_a'), pg_temp.id('org_a'), pg_temp.id('p_orgadmin2_a'), pg_temp.sys_role('admin'), null);
 
@@ -172,7 +180,7 @@ select is(pg_temp.try($q$insert into public.space_hours (organization_id, locati
 select is(pg_temp.try($q$insert into public.space_closures (organization_id, location_id, space_id, starts_at, ends_at) values (pg_temp.id('org_a'), pg_temp.id('loc_a1'), pg_temp.id('space_a2'), '2031-01-01', '2031-01-02')$q$), '23503', 'space_closures at A1 cannot point at a space of A2');
 select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_staff_b1'), pg_temp.sys_role('staff'), pg_temp.id('loc_a1'))$q$), '23503', 'a role assignment in org A cannot name a person of org B');
 select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_unassigned_a'), pg_temp.sys_role('staff'), pg_temp.id('loc_b1'))$q$), '23503', 'a role assignment in org A cannot be at a location of org B');
-select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_unassigned_a'), pg_temp.id('role_custom_b'), pg_temp.id('loc_a1'))$q$), '23503', 'a role assignment in org A cannot use a custom role of org B');
+select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_unassigned_a'), pg_temp.id('role_custom_b'), pg_temp.id('loc_a1'))$q$), '42501', 'a role assignment in org A cannot use a custom role of org B (same generic refusal as a missing role, no role details)');
 select is(pg_temp.try($q$insert into public.user_permissions (organization_id, person_id, location_id, module_key, level) values (pg_temp.id('org_a'), pg_temp.id('p_staff_b1'), null, 'tasks', 'view')$q$), '23503', 'an override in org A cannot name a person of org B');
 select is(pg_temp.try($q$insert into public.user_permissions (organization_id, person_id, location_id, module_key, level) values (pg_temp.id('org_a'), pg_temp.id('p_unassigned_a'), pg_temp.id('loc_b1'), 'reports', 'view')$q$), '23503', 'an override in org A cannot be at a location of org B');
 select is(pg_temp.try($q$insert into public.person_job_titles (organization_id, person_id, job_title_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_staff_a1'), pg_temp.id('jt_b'), null)$q$), '23503', 'a job-title link in org A cannot use a job title of org B');
@@ -196,9 +204,9 @@ select is(pg_temp.try($q$insert into public.people (organization_id, first_name,
 
 -- location admin (rank 80 at A1)
 select pg_temp.act_as('u_locadmin_a1');
-select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_unassigned_a'), pg_temp.sys_role('staff'), pg_temp.id('loc_a1'))$q$), 'ok', 'positive: location admin A1 can give staff at A1 to a new person');
+select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_unassigned_a'), pg_temp.sys_role('staff'), pg_temp.id('loc_a1'))$q$), '42501', 'location admin A1 cannot give a first role to a person nobody at A1 can see (onboarding goes through create_person_with_assignment)');
 select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_staff_a1'), pg_temp.sys_role('manager'), pg_temp.id('loc_a1'))$q$), 'ok', 'positive: location admin A1 can promote staff A1 to manager at A1');
-select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_unassigned_a'), pg_temp.id('role_custom_a'), pg_temp.id('loc_a1'))$q$), 'ok', 'positive: location admin A1 can give a custom role (rank 30) at A1');
+select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_t5'), pg_temp.id('role_custom_a'), pg_temp.id('loc_a1'))$q$), 'ok', 'positive: location admin A1 can give a custom role (rank 30) at A1 to a visible A1 person');
 select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_unassigned_a'), pg_temp.sys_role('admin'), pg_temp.id('loc_a1'))$q$), '42501', 'location admin A1 cannot grant admin at A1 (rank 80 is not below 80)');
 select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_unassigned_a'), pg_temp.sys_role('admin'), null)$q$), '42501', 'location admin A1 cannot grant org-scope admin');
 select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_unassigned_a'), pg_temp.sys_role('staff'), pg_temp.id('loc_a2'))$q$), '42501', 'location admin A1 cannot grant at A2');
@@ -221,16 +229,17 @@ select is(pg_temp.affected($q$update public.accounts set disabled_at = now() whe
 select is(pg_temp.affected($q$update public.accounts set disabled_at = now() where id = pg_temp.id('acct_locadmin_a1')$q$), 0::bigint, 'location admin A1 cannot disable their own account');
 select is(pg_temp.affected($q$update public.accounts set disabled_at = now() where id = pg_temp.id('acct_manager_a1')$q$), 1::bigint, 'positive: location admin A1 can disable the manager''s account');
 select is(pg_temp.affected($q$update public.accounts set disabled_at = null where id = pg_temp.id('acct_manager_a1')$q$), 1::bigint, 'positive: location admin A1 can re-enable it');
-select is(pg_temp.try($q$insert into public.people (organization_id, first_name, last_name) values (pg_temp.id('org_a'), 'New', 'Hire')$q$), 'ok', 'positive: location admin A1 can create a person');
-select is(pg_temp.affected($q$delete from public.role_assignments where id = pg_temp.id('ra_manager_a1')$q$), 1::bigint, 'positive: location admin A1 can remove the manager''s assignment at A1');
+select is(pg_temp.try($q$insert into public.people (organization_id, first_name, last_name) values (pg_temp.id('org_a'), 'New', 'Hire')$q$), '42501', 'location admin A1 cannot insert into people directly (organization-scope admins only; they onboard through the RPC)');
+select is(pg_temp.try($q$delete from public.role_assignments where id = pg_temp.id('ra_manager_a1')$q$), '42501', 'location admin A1 cannot remove someone''s last role assignment (archive the person instead)');
+select is(pg_temp.affected($q$delete from public.role_assignments where person_id = pg_temp.id('p_t4') and role_id = pg_temp.id('role_custom_a')$q$), 1::bigint, 'positive: location admin A1 can remove one of a person''s two assignments');
+select is(pg_temp.try($q$delete from public.role_assignments where person_id = pg_temp.id('p_t4')$q$), '42501', 'location admin A1 cannot remove the one that is left');
 
 -- manager with a people_roles = admin override at A1 (rank 50)
 select pg_temp.act_as('postgres');
 select is(pg_temp.try($q$insert into public.user_permissions (organization_id, person_id, location_id, module_key, level) values (pg_temp.id('org_a'), pg_temp.id('p_manager_a1'), pg_temp.id('loc_a1'), 'people_roles', 'admin')$q$), 'ok', '(setup) grant the manager people_roles = admin at A1');
 select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_manager_a1'), pg_temp.sys_role('manager'), pg_temp.id('loc_a1')) on conflict do nothing$q$), 'ok', '(setup) the manager''s own assignment is back');
 select pg_temp.act_as('u_manager_a1');
-select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_t1'), pg_temp.sys_role('staff'), pg_temp.id('loc_a1'))$q$), 'ok', 'positive: manager with the override can give staff at A1 (rank 10 < 50)');
-select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_t1'), pg_temp.id('role_custom_a'), pg_temp.id('loc_a1'))$q$), 'ok', 'positive: manager with the override can also give a custom role of rank 30');
+select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_t1'), pg_temp.id('role_custom_a'), pg_temp.id('loc_a1'))$q$), 'ok', 'positive: manager with the override can give a custom role of rank 30 to a visible A1 person');
 select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_t1'), pg_temp.sys_role('manager'), pg_temp.id('loc_a1'))$q$), '42501', 'manager with the override cannot grant manager (not below their own rank)');
 select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_t1'), pg_temp.sys_role('admin'), pg_temp.id('loc_a1'))$q$), '42501', 'manager with the override cannot grant admin');
 select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_t1'), pg_temp.sys_role('admin'), null)$q$), '42501', 'manager with the override cannot grant org admin');
@@ -267,6 +276,7 @@ select is(pg_temp.affected($q$update public.accounts set disabled_at = now() whe
 select is(pg_temp.affected($q$update public.accounts set disabled_at = now() where id = pg_temp.id('acct_staff_a2')$q$), 1::bigint, 'positive: org admin A can disable a staff account');
 select is(pg_temp.try($q$insert into public.role_assignments (organization_id, person_id, role_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('p_staff_b1'), pg_temp.sys_role('staff'), pg_temp.id('loc_a1'))$q$), '42501', 'org admin A cannot assign a person of org B');
 select is(pg_temp.affected($q$delete from public.role_assignments where id = pg_temp.id('ra_locadmin_a1')$q$), 1::bigint, 'positive: org admin A can remove a location admin (rank 80 < 90)');
+select is(pg_temp.affected($q$delete from public.role_assignments where person_id = pg_temp.id('p_t5')$q$), 2::bigint, 'positive: an organization admin can remove a person''s last assignments (two rows here)');
 
 -- platform admin and service_role may touch org admins
 select pg_temp.act_as('u_platform');
