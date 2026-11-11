@@ -3,7 +3,6 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin, requireModulePermission, requireOrgMember } from '@/lib/auth';
-import { buildHref } from '@/lib/paging';
 import { toInt } from '@/lib/text';
 import { zonedLocalToUtc } from '@/lib/time';
 import {
@@ -19,7 +18,9 @@ import {
   str,
   zodProblem,
   type AdminFormState,
+  type OverrideOffer,
 } from './helpers';
+import { loadNames, loadScheduleLookups, nameOf, zoneOf } from '@/experiences/schedule/lookups';
 import { getLocation, updateStaffingSwitches } from '@/domains/organizations';
 import {
   addTemplateItem,
@@ -36,7 +37,11 @@ import {
   decideSwap,
   decideTimeOff,
   decisionSchema,
+  formatShiftRange,
+  getShift,
+  RULE_TEXT,
   personQualificationSchema,
+  positionShiftsMissingQualification,
   positionSaveSchema,
   publishSchedule,
   qualificationSaveSchema,
@@ -72,15 +77,6 @@ function refreshSchedule() {
 async function zoneFor(orgId: string, locationId: string): Promise<string | null> {
   const loc = await getLocation(orgId, locationId);
   return loc.ok && loc.data ? loc.data.timezone : null;
-}
-
-/** Where the override offer is shown: the page re-renders with the reason and a second button. */
-function offerOverride(
-  path: string,
-  params: Record<string, string | undefined>,
-  rule: AssignRule,
-): never {
-  redirect(buildHref(path, { ...params, rule }));
 }
 
 // ---- schedules and shifts ----
@@ -165,7 +161,7 @@ export async function updateShiftAction(
     position_id: str(formData, 'position_id').trim() || null,
     starts_at: starts,
     ends_at: ends,
-    // A blank note leaves the notes as they are (the database reads null as "keep").
+    // Blank clears the notes (the form shows the current note); null would keep them.
     notes: str(formData, 'notes'),
   });
   if (!parsed.success) return zodProblem(formData, parsed.error);
@@ -177,9 +173,11 @@ export async function updateShiftAction(
 
 /**
  * Gives a shift to a person (blank person = open it). When the database refuses for time off or
- * a missing qualification and the caller is a schedule admin, the page is shown again with the
- * reason and a second, explicit "Assign anyway" button that sends the override. An overlap or a
- * person who cannot work there never offers it.
+ * a missing qualification and the caller is a schedule admin (and the person is not the caller),
+ * the answer carries an offer: who, which shift, which rule. The second, explicit "Assign anyway"
+ * button sends override=yes. Before acting on it the server asks again without the override and
+ * goes ahead only if the same rule still refuses. An overlap or a person who cannot work there
+ * never offers it.
  */
 export async function assignShiftAction(
   _previous: AdminFormState,
@@ -188,35 +186,70 @@ export async function assignShiftAction(
   const orgId = await activeOrgId();
   const locationId = guid(formData, 'location_id');
   if (!locationId) return bad(formData, BAD_ID);
-  await requireModulePermission(orgId, locationId, 'staff_schedule', 'edit');
+  const member = await requireModulePermission(orgId, locationId, 'staff_schedule', 'edit');
   const person = optionalGuid(formData, 'person_id');
   if (person === undefined) return bad(formData, BAD_ID);
   const override = str(formData, 'override') === 'yes';
   const parsed = shiftAssignSchema.safeParse({
     shift_id: str(formData, 'shift_id').trim(),
     person_id: person,
-    override,
+    override: false,
   });
   if (!parsed.success) return zodProblem(formData, parsed.error);
-  const result = await assignShift(parsed.data);
-  if (result.ok) {
+
+  const first = await assignShift(parsed.data);
+  if (first.ok) {
     refreshSchedule();
     return good(person ? 'Assigned.' : 'The shift is open now.');
   }
   const isAdmin = await requireModuleLevel(orgId, locationId);
-  if (!override && person && canOfferOverride(result.rule, isAdmin) && result.rule) {
-    offerOverride(
-      SCHEDULE,
-      {
-        location: locationId,
-        week: str(formData, 'week') || undefined,
-        shift: parsed.data.shift_id,
-        person,
-      },
-      result.rule,
-    );
+  const self = person !== null && person === member.personId;
+  if (!person || self || !first.rule || !canOfferOverride(first.rule, isAdmin)) {
+    return bad(formData, first.message);
   }
-  return bad(formData, result.message);
+  if (!override) {
+    return {
+      ok: false,
+      message: first.message,
+      offer: await describeOffer(orgId, parsed.data.shift_id, person, first.rule, {
+        location_id: locationId,
+        shift_id: parsed.data.shift_id,
+        person_id: person,
+        rule: first.rule,
+      }),
+    };
+  }
+  // Override pressed: only for the refusal that was shown.
+  if (str(formData, 'rule') !== first.rule) return bad(formData, first.message);
+  const second = await assignShift({ ...parsed.data, override: true });
+  if (!second.ok) return bad(formData, second.message);
+  refreshSchedule();
+  return good('Assigned, with the rule overridden. This is recorded.');
+}
+
+/** Who, which shift and which rule, in words, built from the database (not from the form). */
+async function describeOffer(
+  orgId: string,
+  shiftId: string,
+  personId: string,
+  rule: AssignRule,
+  fields: Record<string, string>,
+): Promise<OverrideOffer> {
+  const [shift, names, lookups] = await Promise.all([
+    getShift(orgId, shiftId),
+    loadNames(orgId, [personId]),
+    loadScheduleLookups(orgId),
+  ]);
+  const s = shift.ok ? shift.data : null;
+  const when = s
+    ? `${formatShiftRange(s.starts_at, s.ends_at, zoneOf(lookups, s.location_id))}, ${
+        lookups.positions.get(s.position_id) ?? 'Shift'
+      }`
+    : 'this shift';
+  return {
+    message: `${nameOf(names, personId)} cannot take ${when}. ${RULE_TEXT[rule]} You can assign them anyway. This is recorded.`,
+    fields,
+  };
 }
 
 async function requireModuleLevel(orgId: string, locationId: string): Promise<boolean> {
@@ -261,85 +294,103 @@ export async function applyTemplateAction(
   const result = await applyTemplate(parsed.data);
   if (!result.ok) return bad(formData, result.message);
   refreshSchedule();
-  const open = result.data.filter((r) => r.refused !== null || r.assigned_person_id === null);
-  const reasons = new Map<string, number>();
-  for (const r of open) {
+  const made = result.data.filter((r) => r.shift_id !== null);
+  const notes = new Map<string, number>();
+  for (const r of result.data) {
+    if (r.shift_id !== null && r.refused === null && r.assigned_person_id !== null) continue;
     const text = r.refused
       ? refusedText(r.refused)
       : 'Left open. No one was chosen in the template.';
-    reasons.set(text, (reasons.get(text) ?? 0) + 1);
+    notes.set(text, (notes.get(text) ?? 0) + 1);
   }
-  const why = [...reasons].map(([text, n]) => `${n}: ${text}`).join(' ');
+  const why = [...notes].map(([text, n]) => `${n}: ${text}`).join(' ');
   return good(
-    `Added ${result.data.length} ${result.data.length === 1 ? 'shift' : 'shifts'}.` +
-      (open.length > 0 ? ` ${open.length} left open. ${why}` : ''),
+    `Added ${made.length} ${made.length === 1 ? 'shift' : 'shifts'}.` + (why ? ` ${why}` : ''),
   );
 }
 
 // ---- requests ----
 
-export async function decideSwapAction(
-  _previous: AdminFormState,
-  formData: FormData,
-): Promise<AdminFormState> {
+type DecideKind = 'swap' | 'claim';
+
+/**
+ * Approve or deny a swap, drop or claim. A refusal for time off or a missing qualification
+ * becomes an offer (server-built, naming the person, shift and rule) for a schedule admin, unless
+ * one of the people involved is the caller. The override button re-checks the same refusal first.
+ */
+async function decideRequest(kind: DecideKind, formData: FormData): Promise<AdminFormState> {
   const orgId = await activeOrgId();
-  await requireOrgMember(orgId);
+  const member = await requireOrgMember(orgId);
   const approve = str(formData, 'decision') === 'approve';
   const override = str(formData, 'override') === 'yes';
+  const idField = kind === 'swap' ? 'swap_id' : 'claim_id';
   const parsed = decisionSchema.safeParse({
-    id: str(formData, 'swap_id').trim(),
+    id: str(formData, idField).trim(),
     approve,
-    override,
+    override: false,
   });
   if (!parsed.success) return bad(formData, BAD_ID);
-  const result = await decideSwap(parsed.data);
-  if (result.ok) {
+  const decide = kind === 'swap' ? decideSwap : decideClaim;
+  const first = await decide(parsed.data);
+  if (first.ok) {
     refreshSchedule();
     revalidatePath(REQUESTS);
     return good(approve ? 'Approved.' : 'Not approved.');
   }
   const locationId = guid(formData, 'location_id');
+  const shiftId = guid(formData, 'shift_id');
+  const personId = guid(formData, 'person_id');
+  const parties = str(formData, 'party_ids')
+    .split(',')
+    .filter((v) => v !== '');
   const isAdmin = locationId ? await requireModuleLevel(orgId, locationId) : false;
-  if (approve && !override && canOfferOverride(result.rule, isAdmin) && result.rule) {
-    offerOverride(
-      REQUESTS,
-      { swap: parsed.data.id, location: locationId ?? undefined },
-      result.rule,
-    );
+  const involvesMe = member.personId !== null && parties.includes(member.personId);
+  if (
+    !approve ||
+    !first.rule ||
+    !canOfferOverride(first.rule, isAdmin) ||
+    involvesMe ||
+    !locationId ||
+    !shiftId ||
+    !personId
+  ) {
+    return bad(formData, first.message);
   }
-  return bad(formData, result.message);
+  if (!override) {
+    return {
+      ok: false,
+      message: first.message,
+      offer: await describeOffer(orgId, shiftId, personId, first.rule, {
+        [idField]: parsed.data.id,
+        location_id: locationId,
+        shift_id: shiftId,
+        person_id: personId,
+        party_ids: parties.join(','),
+        decision: 'approve',
+        rule: first.rule,
+      }),
+    };
+  }
+  if (str(formData, 'rule') !== first.rule) return bad(formData, first.message);
+  const second = await decide({ ...parsed.data, override: true });
+  if (!second.ok) return bad(formData, second.message);
+  refreshSchedule();
+  revalidatePath(REQUESTS);
+  return good('Approved, with the rule overridden. This is recorded.');
+}
+
+export async function decideSwapAction(
+  _previous: AdminFormState,
+  formData: FormData,
+): Promise<AdminFormState> {
+  return decideRequest('swap', formData);
 }
 
 export async function decideClaimAction(
   _previous: AdminFormState,
   formData: FormData,
 ): Promise<AdminFormState> {
-  const orgId = await activeOrgId();
-  await requireOrgMember(orgId);
-  const approve = str(formData, 'decision') === 'approve';
-  const override = str(formData, 'override') === 'yes';
-  const parsed = decisionSchema.safeParse({
-    id: str(formData, 'claim_id').trim(),
-    approve,
-    override,
-  });
-  if (!parsed.success) return bad(formData, BAD_ID);
-  const result = await decideClaim(parsed.data);
-  if (result.ok) {
-    refreshSchedule();
-    revalidatePath(REQUESTS);
-    return good(approve ? 'Approved.' : 'Not approved.');
-  }
-  const locationId = guid(formData, 'location_id');
-  const isAdmin = locationId ? await requireModuleLevel(orgId, locationId) : false;
-  if (approve && !override && canOfferOverride(result.rule, isAdmin) && result.rule) {
-    offerOverride(
-      REQUESTS,
-      { claim: parsed.data.id, location: locationId ?? undefined },
-      result.rule,
-    );
-  }
-  return bad(formData, result.message);
+  return decideRequest('claim', formData);
 }
 
 export async function decideTimeOffAction(
@@ -378,8 +429,16 @@ export async function savePositionAction(
   });
   if (!parsed.success) return zodProblem(formData, parsed.error);
   const result = await savePosition(parsed.data);
-  if (result.ok) revalidatePath('/app/admin/positions');
-  return fromResult(formData, result, 'Saved.');
+  if (!result.ok) return bad(formData, result.message);
+  revalidatePath('/app/admin/positions');
+  // A new requirement can leave people on upcoming shifts without it: say so.
+  const missing = await positionShiftsMissingQualification(result.data);
+  const n = missing.ok ? missing.data : 0;
+  return good(
+    n > 0
+      ? `Saved. ${n} upcoming ${n === 1 ? 'shift has' : 'shifts have'} someone missing this qualification.`
+      : 'Saved.',
+  );
 }
 
 export async function archivePositionAction(

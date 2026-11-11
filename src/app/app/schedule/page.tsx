@@ -16,13 +16,13 @@ import {
 import { ScheduleNav } from '@/experiences/schedule/ui';
 import { addDays } from '@/lib/time';
 import { firstParam, parsePage } from '@/lib/paging';
-import { displayName, listPeople, type Person } from '@/domains/identity';
 import {
   formatShiftRange,
   getSchedule,
   groupShiftsByDay,
   listMyUpcomingShifts,
   listScheduleShifts,
+  listSwapCandidates,
   notStarted,
   todayIn,
   weekStartOf,
@@ -66,21 +66,19 @@ export default async function SchedulePage({
   const myRows = mine && mine.ok ? mine.data.rows : [];
   const names = await loadNames(orgId, [...visibleWeek.map((s) => s.assigned_person_id)]);
 
-  // Coworkers to offer a swap to: the people the database lets this person see at that location.
-  const peers =
-    personId && myRows.length > 0
+  // People the database lets this person offer each shift to (names only).
+  const candidates = new Map<string, { person_id: string; display_name: string }[]>(
+    personId
       ? await Promise.all(
-          [...new Set(myRows.map((s) => s.location_id))].map(async (id) => {
-            const res = await listPeople(orgId, {
-              page: 1,
-              words: [],
-              locationId: id,
-              status: 'active',
-            });
-            return [id, res.ok ? res.data.rows.filter((p) => p.id !== personId) : []] as const;
-          }),
-        ).then((e) => new Map(e))
-      : new Map<string, Person[]>();
+          myRows
+            .filter((s) => notStarted(s.starts_at))
+            .map(async (s) => {
+              const res = await listSwapCandidates(s.id);
+              return [s.id, res.ok ? res.data : []] as const;
+            }),
+        )
+      : [],
+  );
 
   return (
     <main>
@@ -111,13 +109,43 @@ export default async function SchedulePage({
                         <option value="" disabled>
                           Choose a person
                         </option>
-                        {(peers.get(s.location_id) ?? []).map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {displayName(p)}
+                        {(candidates.get(s.id) ?? []).map((p) => (
+                          <option key={p.person_id} value={p.person_id}>
+                            {p.display_name}
                           </option>
                         ))}
                       </select>
                     </label>
+                  </p>
+                  <p>
+                    <label>
+                      Want a shift in return? (optional){' '}
+                      <select name="counter_shift_id" defaultValue="">
+                        <option value="">No, just give mine away</option>
+                        {visibleWeek
+                          .filter(
+                            (c) =>
+                              c.location_id === s.location_id &&
+                              c.assigned_person_id !== null &&
+                              c.assigned_person_id !== personId &&
+                              notStarted(c.starts_at),
+                          )
+                          .map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {nameOf(names, c.assigned_person_id)}:{' '}
+                              {formatShiftRange(
+                                c.starts_at,
+                                c.ends_at,
+                                zoneOf(lookups, c.location_id),
+                              )}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  </p>
+                  <p>
+                    A plain swap can be approved at once when your organization allows it. A swap
+                    with a shift in return always goes to a manager. The shift must be theirs.
                   </p>
                   <p>
                     <label>

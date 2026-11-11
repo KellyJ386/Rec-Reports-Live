@@ -48,6 +48,8 @@ export async function requestSwapAction(
   const parsed = swapRequestSchema.safeParse({
     shift_id: str(formData, 'shift_id').trim(),
     to_person_id: str(formData, 'to_person_id').trim(),
+    // Blank: a plain swap. A shift of theirs: a swap with a shift in return (a manager decides).
+    counter_shift_id: str(formData, 'counter_shift_id').trim() || null,
     note: str(formData, 'note'),
   });
   if (!parsed.success) return zodProblem(formData, parsed.error);

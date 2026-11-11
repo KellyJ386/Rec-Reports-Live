@@ -63,7 +63,8 @@ export default async function SettingsPage() {
                 value="yes"
                 defaultChecked={switches.data.auto_approve_swaps}
               />{' '}
-              Approve swaps without a manager once both people agree
+              Approve a plain swap without a manager once both people agree (a swap with a shift in
+              return still goes to a manager)
             </label>
           </p>
           <p>

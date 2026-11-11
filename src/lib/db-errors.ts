@@ -141,7 +141,16 @@ const TRIGGER_MESSAGES: ReadonlyArray<readonly [string, string]> = [
   ],
   ['retried too many times', 'That job was already retried 3 times. Ask support for help.'],
 
-  // Staff scheduling (20261113000100). Rule refusals first: their messages are stable.
+  // Staff scheduling (20261113000100, 20261113000200). Rule refusals first: their messages are stable.
+  [
+    'you cannot override the rules for yourself',
+    'You cannot override the rules for yourself. Ask another schedule admin.',
+  ],
+  ['you cannot take this shift', 'You cannot take this shift.'],
+  [
+    'a schedule holds at most 2000 shifts',
+    'That week already has the most shifts it can hold (2000). Remove some first.',
+  ],
   ['that person cannot work at this location', 'That person cannot work at this location.'],
   ['that person already has a shift at that time', 'That person already has a shift at that time.'],
   ['that person has approved time off then', 'That person has approved time off then.'],
@@ -239,6 +248,8 @@ const RULE_DETAIL_TEXT: Readonly<Record<string, string>> = {
   time_off: 'That person has approved time off then.',
   qualification: 'That person is missing a required qualification.',
   stale: 'That changed while you were looking. Reload and try again.',
+  unavailable: 'You cannot take this shift.',
+  too_many_shifts: 'That week already has the most shifts it can hold (2000). Remove some first.',
   has_shifts: 'That person has shifts on those days. Give those shifts to someone else first.',
 };
 

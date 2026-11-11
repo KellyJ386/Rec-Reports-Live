@@ -6,7 +6,18 @@ import { getActiveOrganization } from '@/lib/auth';
 import { firstIssue, type FormState } from '@/lib/auth/schemas';
 import type { Result } from '@/lib/db-errors';
 
-export type AdminFormState = FormState & { values?: Record<string, string> };
+/**
+ * A refusal that a schedule admin may override. The server builds it (never the client) and the
+ * override action checks it again against the database before it acts.
+ */
+export type OverrideOffer = {
+  /** Plain words: who, which shift and which rule would be overridden. */
+  message: string;
+  /** Hidden fields for the second, explicit button. */
+  fields: Record<string, string>;
+};
+
+export type AdminFormState = FormState & { values?: Record<string, string>; offer?: OverrideOffer };
 
 export const NOT_CONFIRMED = 'Tick the box to confirm.';
 

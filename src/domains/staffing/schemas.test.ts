@@ -115,3 +115,16 @@ describe('other schemas', () => {
     expect(ok(timeOffRequestSchema, { ...base, reason: 'x'.repeat(501) })).toBe(false);
   });
 });
+
+describe('shift update notes', () => {
+  const base = { shift_id: '11111111-1111-4111-8111-111111111111' };
+  it('keeps an empty note (it clears) and leaves null as keep', () => {
+    const cleared = shiftUpdateSchema.parse({ ...base, notes: '   ' });
+    expect(cleared.notes).toBe('');
+    expect(shiftUpdateSchema.parse({ ...base, notes: null }).notes).toBeNull();
+    expect(shiftUpdateSchema.parse(base).notes).toBeUndefined();
+  });
+  it('still limits the length', () => {
+    expect(shiftUpdateSchema.safeParse({ ...base, notes: 'x'.repeat(1001) }).success).toBe(false);
+  });
+});

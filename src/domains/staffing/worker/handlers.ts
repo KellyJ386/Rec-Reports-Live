@@ -41,13 +41,25 @@ function dateOf(value: unknown): string | null {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
 }
 
+/** A small whole number from the payload (never free text), else 0. */
+function countOf(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 && value < 100000
+    ? value
+    : 0;
+}
+
 const SPECS: Record<string, Spec> = {
   'schedule.published': {
     kind: 'schedule_published',
     needsShift: false,
     title: (_r, _s, e) => {
       const week = dateOf(e.payload.week_start);
-      return week ? `New schedule: week of ${dayLabel(week)}` : 'A new schedule was published';
+      const base = week
+        ? `New schedule: week of ${dayLabel(week)}`
+        : 'A new schedule was published';
+      const open = countOf(e.payload.open_shift_count);
+      if (open === 0) return base;
+      return `${base}. ${open} ${open === 1 ? 'shift is' : 'shifts are'} open`;
     },
     link: () => SCHEDULE_LINK,
   },

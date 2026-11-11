@@ -87,6 +87,29 @@ describe('staffing notify handler', () => {
     await s.h.run(asEvent(s.db, s.id), NO_DEADLINE);
     expect([...s.db.notifications.values()][0]?.title).toBe('New schedule: week of Sun, Nov 15');
 
+    const o = setup('schedule.published', [{ personId: a, reason: 'schedule_published' }], {
+      week_start: '2026-11-15',
+      open_shift_count: 3,
+    });
+    await o.h.run(asEvent(o.db, o.id), NO_DEADLINE);
+    expect([...o.db.notifications.values()][0]?.title).toBe(
+      'New schedule: week of Sun, Nov 15. 3 shifts are open',
+    );
+    const one = setup('schedule.published', [{ personId: a, reason: 'schedule_published' }], {
+      week_start: '2026-11-15',
+      open_shift_count: 1,
+    });
+    await one.h.run(asEvent(one.db, one.id), NO_DEADLINE);
+    expect([...one.db.notifications.values()][0]?.title).toBe(
+      'New schedule: week of Sun, Nov 15. 1 shift is open',
+    );
+    const zero = setup('schedule.published', [{ personId: a, reason: 'schedule_published' }], {
+      week_start: '2026-11-15',
+      open_shift_count: 'many',
+    });
+    await zero.h.run(asEvent(zero.db, zero.id), NO_DEADLINE);
+    expect([...zero.db.notifications.values()][0]?.title).toBe('New schedule: week of Sun, Nov 15');
+
     const t = setup('time_off.decided', [{ personId: a, reason: 'time_off_decided' }], {
       starts_on: '2026-12-01',
       ends_on: '2026-12-03',

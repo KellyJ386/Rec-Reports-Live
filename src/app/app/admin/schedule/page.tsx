@@ -10,6 +10,7 @@ import {
   publishScheduleAction,
   updateShiftAction,
 } from '@/experiences/admin/actions/schedule';
+import { OverrideForm } from '@/experiences/admin/override-form';
 import { ConfirmAction } from '@/experiences/admin/confirm-action';
 import { ErrorMessage } from '@/experiences/admin/ui';
 import { loadNames, loadScheduleLookups, nameOf } from '@/experiences/schedule/lookups';
@@ -18,18 +19,15 @@ import { addDays, utcToZonedLocal } from '@/lib/time';
 import { displayName } from '@/domains/identity';
 import { buildHref, firstParam } from '@/lib/paging';
 import {
-  ASSIGN_RULES,
-  RULE_TEXT,
-  canOfferOverride,
   formatShiftRange,
   getSchedule,
   groupShiftsByDay,
   listPositions,
+  listShiftOverrides,
   listScheduleShifts,
   listTemplates,
   todayIn,
   weekStartOf,
-  type AssignRule,
 } from '@/domains/staffing';
 
 export const metadata = { title: 'Schedule | Rec Reports' };
@@ -41,7 +39,7 @@ export default async function AdminSchedulePage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { orgId, access } = await requireAdminArea('canSchedule');
+  const { orgId } = await requireAdminArea('canSchedule');
   const sp = await searchParams;
   const [places, lookups] = await Promise.all([
     getLocationsWithPermission(orgId, 'staff_schedule', 'edit'),
@@ -78,20 +76,12 @@ export default async function AdminSchedulePage({
     orgId,
     shifts.map((s) => s.assigned_person_id),
   );
+  // Overrides come from a function that only schedulers may call; a refusal shows nothing.
+  const overrides = schedule ? await listShiftOverrides(schedule.id) : null;
+  const overridden = new Set(
+    overrides && overrides.ok ? overrides.data.map((o) => o.shift_id) : [],
+  );
 
-  // The override offer: the page was reloaded after a refusal that a schedule admin may override.
-  const failedShift = firstParam(sp.shift);
-  const failedPerson = firstParam(sp.person);
-  const ruleParam = firstParam(sp.rule);
-  const rule = (ASSIGN_RULES as readonly string[]).includes(ruleParam ?? '')
-    ? (ruleParam as AssignRule)
-    : null;
-  const offer =
-    failedShift && failedPerson && canOfferOverride(rule, access.canScheduleAdmin) && rule
-      ? { shift: failedShift, person: failedPerson, rule }
-      : null;
-
-  const here = { location: location.id, week };
   const draft = schedule?.status === 'draft';
 
   return (
@@ -125,26 +115,6 @@ export default async function AdminSchedulePage({
       </p>
       {!scheduleRes.ok ? <ErrorMessage message={scheduleRes.message} /> : null}
       {shiftsRes && !shiftsRes.ok ? <ErrorMessage message={shiftsRes.message} /> : null}
-
-      {offer ? (
-        <section aria-label="Assign anyway">
-          <h2>Assign anyway?</h2>
-          <p role="alert">
-            {RULE_TEXT[offer.rule]} You can still assign them, because you manage this schedule.
-            This is recorded.
-          </p>
-          <ActionForm action={assignShiftAction} submitLabel="Assign anyway">
-            <input type="hidden" name="location_id" value={location.id} />
-            <input type="hidden" name="week" value={week} />
-            <input type="hidden" name="shift_id" value={offer.shift} />
-            <input type="hidden" name="person_id" value={offer.person} />
-            <input type="hidden" name="override" value="yes" />
-          </ActionForm>
-          <p>
-            <Link href={buildHref(PATH, here)}>Cancel</Link>
-          </p>
-        </section>
-      ) : null}
 
       {!schedule ? (
         <section>
@@ -182,14 +152,16 @@ export default async function AdminSchedulePage({
                         : s.assigned_person_id
                           ? `Assigned to ${nameOf(names, s.assigned_person_id)}.`
                           : 'Open.'}
-                      {s.override_kinds && s.override_kinds.length > 0
-                        ? ' Assigned with an override.'
-                        : ''}
+                      {overridden.has(s.id) ? ' Assigned with an override.' : ''}
                     </p>
                     {s.status !== 'cancelled' ? (
                       <details>
                         <summary>Change this shift</summary>
-                        <ActionForm action={assignShiftAction} submitLabel="Assign">
+                        <OverrideForm
+                          action={assignShiftAction}
+                          submitLabel="Assign"
+                          overrideLabel="Assign anyway"
+                        >
                           <input type="hidden" name="location_id" value={location.id} />
                           <input type="hidden" name="week" value={week} />
                           <input type="hidden" name="shift_id" value={s.id} />
@@ -206,7 +178,7 @@ export default async function AdminSchedulePage({
                               </select>
                             </label>
                           </p>
-                        </ActionForm>
+                        </OverrideForm>
                         <ActionForm action={updateShiftAction} submitLabel="Save times">
                           <input type="hidden" name="location_id" value={location.id} />
                           <input type="hidden" name="shift_id" value={s.id} />

@@ -6,6 +6,7 @@ import {
   decideSwapAction,
   decideTimeOffAction,
 } from '@/experiences/admin/actions/schedule';
+import { OverrideForm } from '@/experiences/admin/override-form';
 import { ErrorMessage, Pager } from '@/experiences/admin/ui';
 import {
   loadNames,
@@ -14,18 +15,14 @@ import {
   placeOf,
   zoneOf,
 } from '@/experiences/schedule/lookups';
-import { firstParam, parsePage } from '@/lib/paging';
+import { parsePage } from '@/lib/paging';
 import {
-  ASSIGN_RULES,
-  RULE_TEXT,
-  canOfferOverride,
   dateRangeText,
   formatShiftRange,
   getShiftsByIds,
   listClaimsAwaitingDecision,
   listPendingTimeOff,
   listSwapsAwaitingDecision,
-  type AssignRule,
   type ShiftRow,
 } from '@/domains/staffing';
 
@@ -38,7 +35,7 @@ export default async function RequestsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { orgId, access } = await requireAdminArea('canScheduleRequests');
+  const { orgId } = await requireAdminArea('canScheduleRequests');
   const sp = await searchParams;
   const page = parsePage(sp.page);
   const [lookups, swaps, claims, timeOff] = await Promise.all([
@@ -64,14 +61,6 @@ export default async function RequestsPage({
     ...timeOffRows.map((t) => t.person_id),
   ]);
 
-  const ruleParam = firstParam(sp.rule);
-  const rule = (ASSIGN_RULES as readonly string[]).includes(ruleParam ?? '')
-    ? (ruleParam as AssignRule)
-    : null;
-  const overrideSwap = firstParam(sp.swap);
-  const overrideClaim = firstParam(sp.claim);
-  const canOverride = canOfferOverride(rule, access.canScheduleAdmin);
-
   function describe(shift: ShiftRow | undefined): string {
     if (!shift) return 'A shift you cannot see';
     return `${formatShiftRange(shift.starts_at, shift.ends_at, zoneOf(lookups, shift.location_id))}, ${
@@ -90,40 +79,37 @@ export default async function RequestsPage({
       {!swaps.ok ? <ErrorMessage message={swaps.message} /> : null}
       {swaps.ok && swapRows.length === 0 ? <p>Nothing is waiting.</p> : null}
       <ul>
-        {swapRows.map((s) => {
-          const offer = canOverride && overrideSwap === s.id && rule;
-          return (
-            <li key={s.id}>
-              <p>
-                {s.kind === 'drop'
-                  ? `${nameOf(names, s.from_person_id)} asks to drop`
-                  : `${nameOf(names, s.from_person_id)} and ${nameOf(names, s.to_person_id)} want to swap`}
-                : {describe(shiftById.get(s.shift_id))}
-              </p>
-              {offer ? (
-                <p role="alert">{RULE_TEXT[offer]} You can approve it anyway. This is recorded.</p>
-              ) : null}
-              <ActionForm action={decideSwapAction} submitLabel="Approve">
-                <input type="hidden" name="swap_id" value={s.id} />
-                <input type="hidden" name="location_id" value={s.location_id} />
-                <input type="hidden" name="decision" value="approve" />
-              </ActionForm>
-              {offer ? (
-                <ActionForm action={decideSwapAction} submitLabel="Approve anyway">
-                  <input type="hidden" name="swap_id" value={s.id} />
-                  <input type="hidden" name="location_id" value={s.location_id} />
-                  <input type="hidden" name="decision" value="approve" />
-                  <input type="hidden" name="override" value="yes" />
-                </ActionForm>
-              ) : null}
-              <ActionForm action={decideSwapAction} submitLabel="Do not approve">
-                <input type="hidden" name="swap_id" value={s.id} />
-                <input type="hidden" name="location_id" value={s.location_id} />
-                <input type="hidden" name="decision" value="deny" />
-              </ActionForm>
-            </li>
-          );
-        })}
+        {swapRows.map((s) => (
+          <li key={s.id}>
+            <p>
+              {s.kind === 'drop'
+                ? `${nameOf(names, s.from_person_id)} asks to drop`
+                : `${nameOf(names, s.from_person_id)} and ${nameOf(names, s.to_person_id)} want to swap`}
+              : {describe(shiftById.get(s.shift_id))}
+            </p>
+            <OverrideForm
+              action={decideSwapAction}
+              submitLabel="Approve"
+              overrideLabel="Approve anyway"
+            >
+              <input type="hidden" name="swap_id" value={s.id} />
+              <input type="hidden" name="location_id" value={s.location_id} />
+              <input type="hidden" name="shift_id" value={s.shift_id} />
+              <input type="hidden" name="person_id" value={s.to_person_id ?? s.from_person_id} />
+              <input
+                type="hidden"
+                name="party_ids"
+                value={[s.from_person_id, s.to_person_id].filter(Boolean).join(',')}
+              />
+              <input type="hidden" name="decision" value="approve" />
+            </OverrideForm>
+            <ActionForm action={decideSwapAction} submitLabel="Do not approve">
+              <input type="hidden" name="swap_id" value={s.id} />
+              <input type="hidden" name="location_id" value={s.location_id} />
+              <input type="hidden" name="decision" value="deny" />
+            </ActionForm>
+          </li>
+        ))}
       </ul>
       {swaps.ok ? (
         <Pager
@@ -138,37 +124,30 @@ export default async function RequestsPage({
       {!claims.ok ? <ErrorMessage message={claims.message} /> : null}
       {claims.ok && claimRows.length === 0 ? <p>Nothing is waiting.</p> : null}
       <ul>
-        {claimRows.map((c) => {
-          const offer = canOverride && overrideClaim === c.id && rule;
-          return (
-            <li key={c.id}>
-              <p>
-                {nameOf(names, c.person_id)} wants: {describe(shiftById.get(c.shift_id))}
-              </p>
-              {offer ? (
-                <p role="alert">{RULE_TEXT[offer]} You can approve it anyway. This is recorded.</p>
-              ) : null}
-              <ActionForm action={decideClaimAction} submitLabel="Approve">
-                <input type="hidden" name="claim_id" value={c.id} />
-                <input type="hidden" name="location_id" value={c.location_id} />
-                <input type="hidden" name="decision" value="approve" />
-              </ActionForm>
-              {offer ? (
-                <ActionForm action={decideClaimAction} submitLabel="Approve anyway">
-                  <input type="hidden" name="claim_id" value={c.id} />
-                  <input type="hidden" name="location_id" value={c.location_id} />
-                  <input type="hidden" name="decision" value="approve" />
-                  <input type="hidden" name="override" value="yes" />
-                </ActionForm>
-              ) : null}
-              <ActionForm action={decideClaimAction} submitLabel="Do not approve">
-                <input type="hidden" name="claim_id" value={c.id} />
-                <input type="hidden" name="location_id" value={c.location_id} />
-                <input type="hidden" name="decision" value="deny" />
-              </ActionForm>
-            </li>
-          );
-        })}
+        {claimRows.map((c) => (
+          <li key={c.id}>
+            <p>
+              {nameOf(names, c.person_id)} wants: {describe(shiftById.get(c.shift_id))}
+            </p>
+            <OverrideForm
+              action={decideClaimAction}
+              submitLabel="Approve"
+              overrideLabel="Approve anyway"
+            >
+              <input type="hidden" name="claim_id" value={c.id} />
+              <input type="hidden" name="location_id" value={c.location_id} />
+              <input type="hidden" name="shift_id" value={c.shift_id} />
+              <input type="hidden" name="person_id" value={c.person_id} />
+              <input type="hidden" name="party_ids" value={c.person_id} />
+              <input type="hidden" name="decision" value="approve" />
+            </OverrideForm>
+            <ActionForm action={decideClaimAction} submitLabel="Do not approve">
+              <input type="hidden" name="claim_id" value={c.id} />
+              <input type="hidden" name="location_id" value={c.location_id} />
+              <input type="hidden" name="decision" value="deny" />
+            </ActionForm>
+          </li>
+        ))}
       </ul>
       {claims.ok ? (
         <Pager

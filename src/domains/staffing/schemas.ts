@@ -99,7 +99,8 @@ export const shiftUpdateSchema = z
     position_id: z.uuid().nullable().optional(),
     starts_at: isoDateTime.nullable().optional(),
     ends_at: isoDateTime.nullable().optional(),
-    notes: note(1000).nullable().optional(),
+    // null keeps the notes; '' clears them.
+    notes: z.string().trim().max(1000, 'Use 1000 characters or fewer').nullable().optional(),
     override: z.boolean().optional(),
   })
   .refine(endsAfterStart, { message: SPAN_MESSAGE, path: ['ends_at'] });

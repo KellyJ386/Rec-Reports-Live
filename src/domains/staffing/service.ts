@@ -52,7 +52,7 @@ export type ScheduleRow = Pick<
   'id' | 'location_id' | 'week_start' | 'status' | 'published_at'
 >;
 const SHIFT_COLUMNS =
-  'id, location_id, schedule_id, position_id, starts_at, ends_at, assigned_person_id, status, notes, override_kinds';
+  'id, location_id, schedule_id, position_id, starts_at, ends_at, assigned_person_id, status, notes';
 export type ShiftRow = Pick<
   Tables<'shifts'>,
   | 'id'
@@ -64,7 +64,6 @@ export type ShiftRow = Pick<
   | 'assigned_person_id'
   | 'status'
   | 'notes'
-  | 'override_kinds'
 >;
 export type TemplateRow = Pick<
   Tables<'shift_templates'>,
@@ -114,11 +113,23 @@ export type ClaimableShift = {
   starts_at: string;
   ends_at: string;
 };
+/** One row per template item. shift_id is null when no shift was made (time_change, position_unavailable). */
 export type TemplateApplyRow = {
-  shift_id: string;
+  shift_id: string | null;
   assigned_person_id: string | null;
   refused: string | null;
+  item_id: string;
 };
+
+/** An override recorded on a shift (read only through shift_overrides, never from the table). */
+export type ShiftOverride = {
+  shift_id: string;
+  override_kinds: string[];
+  override_by_person_id: string;
+  override_at: string;
+};
+
+export type SwapCandidate = { person_id: string; display_name: string };
 
 /** A refusal while putting a person on a shift, with the rule that refused it (for the override flow). */
 export type AssignResult<T = null> =
@@ -386,6 +397,35 @@ export async function getMyNextShift(
     .limit(1)
     .maybeSingle();
   return done(error, data);
+}
+
+/**
+ * Overrides recorded on a schedule's shifts. Needs staff_schedule >= edit; for anyone else the
+ * database answers 42501 and this returns an empty list (show nothing).
+ */
+export async function listShiftOverrides(scheduleId: string): Promise<Result<ShiftOverride[]>> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc('shift_overrides', { p_schedule_id: scheduleId });
+  if (error) return error.code === '42501' ? ok([]) : failure(error);
+  return ok(data ?? []);
+}
+
+/** People the caller may offer this shift to (name only; nothing about their time off or skills). */
+export async function listSwapCandidates(shiftId: string): Promise<Result<SwapCandidate[]>> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc('swap_candidates', { p_shift_id: shiftId });
+  return done(error, data ?? []);
+}
+
+/** Upcoming shifts whose person does not meet a qualification the position now needs. */
+export async function positionShiftsMissingQualification(
+  positionId: string,
+): Promise<Result<number>> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc('position_shifts_missing_qualification', {
+    p_position_id: positionId,
+  });
+  return done(error, typeof data === 'number' ? data : 0);
 }
 
 export async function createShift(input: ShiftCreate): Promise<AssignResult<string>> {

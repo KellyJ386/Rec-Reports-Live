@@ -175,26 +175,16 @@ export async function getStaffingSwitches(orgId: string): Promise<Result<Staffin
   });
 }
 
-/** Changes only the staffing key; every other setting is kept as it is. */
+/** Changes only the two staffing switches, in one database call (other settings are untouched). */
 export async function updateStaffingSwitches(
   orgId: string,
   switches: StaffingSwitches,
-): Promise<Result<number>> {
+): Promise<Result<null>> {
   const supabase = await createClient();
-  const { data: current, error: readError } = await supabase
-    .from('organization_settings')
-    .select('settings')
-    .eq('organization_id', orgId)
-    .maybeSingle();
-  if (readError) return failure(readError);
-  const base = (current?.settings ?? {}) as Record<string, unknown>;
-  const { data, error } = await supabase
-    .from('organization_settings')
-    .update({
-      settings: { ...base, staffing: switches } as Tables<'organization_settings'>['settings'],
-    })
-    .eq('organization_id', orgId)
-    .select('id');
-  if (error) return failure(error);
-  return requireChanged(data);
+  const { error } = await supabase.rpc('set_staffing_switches', {
+    p_organization_id: orgId,
+    p_auto_approve_swaps: switches.auto_approve_swaps,
+    p_first_come_open_shifts: switches.first_come_open_shifts,
+  });
+  return error ? failure(error) : ok(null);
 }

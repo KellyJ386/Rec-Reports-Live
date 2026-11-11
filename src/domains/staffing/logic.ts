@@ -228,6 +228,12 @@ export function refusedText(refused: string | null): string {
   ) {
     return `Left open. ${RULE_TEXT[refused]}`;
   }
+  if (refused === 'time_change') {
+    return 'Not added. It falls on a clock change, so the time is not clear. Add it by hand.';
+  }
+  if (refused === 'position_unavailable') {
+    return 'Not added. Its position is archived or not available here.';
+  }
   return 'Left open.';
 }
 

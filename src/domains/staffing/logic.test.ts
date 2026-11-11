@@ -103,6 +103,9 @@ describe('wording', () => {
     expect(refusedText(null)).toBe('Assigned.');
     expect(refusedText('time_off')).toContain('approved time off');
     expect(refusedText('weird')).toBe('Left open.');
+    expect(refusedText('time_change')).toContain('clock change');
+    expect(refusedText('time_change')).toMatch(/^Not added/);
+    expect(refusedText('position_unavailable')).toMatch(/^Not added/);
   });
   it('writes a date range', () => {
     expect(dateRangeText('2026-11-16', '2026-11-16')).toBe('Mon, Nov 16');

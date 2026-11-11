@@ -3049,10 +3049,6 @@ export type Database = {
         Args: { p_shift_id: string }
         Returns: undefined
       }
-      apply_shift_template: {
-        Args: { p_schedule_id: string; p_template_id: string; p_first_day?: number }
-        Returns: { shift_id: string; assigned_person_id: string | null; refused: string | null }[]
-      }
       request_shift_swap: {
         Args: { p_shift_id: string; p_to_person_id: string; p_counter_shift_id?: string | null; p_note?: string | null }
         Returns: string
@@ -3120,6 +3116,26 @@ export type Database = {
       worker_shift_event_recipients: {
         Args: { p_event_id: string }
         Returns: { person_id: string; reason: string }[]
+      }
+      shift_overrides: {
+        Args: { p_schedule_id: string }
+        Returns: { shift_id: string; override_kinds: string[]; override_by_person_id: string; override_at: string }[]
+      }
+      position_shifts_missing_qualification: {
+        Args: { p_position_id: string }
+        Returns: number
+      }
+      apply_shift_template: {
+        Args: { p_schedule_id: string; p_template_id: string; p_first_day?: number }
+        Returns: { shift_id: string | null; assigned_person_id: string | null; refused: string | null; item_id: string }[]
+      }
+      swap_candidates: {
+        Args: { p_shift_id: string }
+        Returns: { person_id: string; display_name: string }[]
+      }
+      set_staffing_switches: {
+        Args: { p_organization_id: string; p_auto_approve_swaps?: boolean | null; p_first_come_open_shifts?: boolean | null }
+        Returns: undefined
       }
     }
     Enums: {

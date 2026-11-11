@@ -302,3 +302,31 @@ describe('mapDbError: staff scheduling', () => {
     expect(mapDbError({ code: 'PT429', message: 'slow down' })).toBe(TOO_FAST_ERROR);
   });
 });
+
+describe('mapDbError: staff scheduling review fixes', () => {
+  it('maps the self-override refusal (42501) and keeps the generic denial apart', () => {
+    const text = mapDbError({
+      code: '42501',
+      message: 'you cannot override the rules for yourself',
+    });
+    expect(text).toMatch(/cannot override the rules for yourself/);
+    expect(text).not.toBe(DENIED_ERROR);
+  });
+  it('maps "you cannot take this shift" from the message and from DETAIL', () => {
+    expect(
+      mapDbError({ code: '23514', message: 'you cannot take this shift', details: 'unavailable' }),
+    ).toBe('You cannot take this shift.');
+    expect(mapDbError({ code: '23514', message: 'x', details: 'unavailable' })).toBe(
+      'You cannot take this shift.',
+    );
+  });
+  it('maps the 2000-shift cap from the message and from DETAIL', () => {
+    const a = mapDbError({
+      code: '23514',
+      message: 'a schedule holds at most 2000 shifts',
+      details: 'too_many_shifts',
+    });
+    expect(a).toMatch(/2000/);
+    expect(mapDbError({ code: '23514', message: 'x', details: 'too_many_shifts' })).toBe(a);
+  });
+});
