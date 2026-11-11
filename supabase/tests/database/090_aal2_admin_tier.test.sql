@@ -5,7 +5,7 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(128 + 18 * (select count(*)::int from pg_class c
+select plan(134 + 18 * (select count(*)::int from pg_class c
   where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p') and (c.relname = 'organizations'
     or exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'organization_id' and not a.attisdropped))));
 
@@ -216,7 +216,7 @@ insert into public.notification_deliveries (organization_id, notification_id, pe
 select pg_temp.id(v.org), pg_temp.id('notif_' || v.k), pg_temp.id(v.person), 'in_app', 'sent', now()
 from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
 insert into public.push_subscriptions (organization_id, person_id, endpoint, p256dh, auth_secret)
-select pg_temp.id(v.org), pg_temp.id(v.person), 'https://push.example.test/' || v.k, 'BPfixturefixturefixturefixture' || v.k, 'fixtureauth' || v.k
+select pg_temp.id(v.org), pg_temp.id(v.person), 'https://fcm.googleapis.com/fcm/send/' || v.k, 'BPfixturefixturefixturefixture' || v.k, 'fixtureauth' || v.k
 from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
 insert into public.notification_preferences (organization_id, person_id, channel, enabled)
 select pg_temp.id(v.org), pg_temp.id(v.person), 'email', false from (values ('org_a', 'p_staff_a1'), ('org_b', 'p_staff_b1')) v (org, person);
@@ -319,7 +319,7 @@ insert into public.notifications (id, organization_id, person_id, kind, title, s
   (pg_temp.id('notif_oa1'), pg_temp.id('org_a'), pg_temp.id('p_orgadmin_a'), 'task.created', 'N1', pg_temp.id('ev_a')),
   (pg_temp.id('notif_oa2'), pg_temp.id('org_a'), pg_temp.id('p_orgadmin_a'), 'task.assigned', 'N2', pg_temp.id('ev_a'));
 insert into public.push_subscriptions (organization_id, person_id, endpoint, p256dh, auth_secret)
-values (pg_temp.id('org_a'), pg_temp.id('p_orgadmin_a'), 'https://push.example.test/oa', 'BPorgadminorgadminorgadmin', 'orgadminauth');
+values (pg_temp.id('org_a'), pg_temp.id('p_orgadmin_a'), 'https://fcm.googleapis.com/fcm/send/oa', 'BPorgadminorgadminorgadmin', 'orgadminauth');
 update public.outbox_events set status = 'dead', attempts = 8 where id = pg_temp.id('ev_a');
 
 -- ===========================================================================
@@ -493,6 +493,10 @@ select is(pg_temp.cnt('people', format('organization_id = %L', pg_temp.id('org_a
 -- 5. Every authenticated-callable function, as an org admin: refused or empty at aal1, works at aal2.
 -- ===========================================================================
 select pg_temp.act_as('postgres');
+-- a live notice addressed to the whole organization, so my_notices has something to return at aal2
+insert into public.notices (id, organization_id, location_id, title, body) values (pg_temp.id('notice_live_a'), pg_temp.id('org_a'), null, 'Live A', 'x');
+insert into public.notice_audiences (organization_id, notice_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('notice_live_a'), null);
+update public.notices set status = 'published', publish_at = now() - interval '1 hour', published_at = now() - interval '1 hour' where id = pg_temp.id('notice_live_a');
 create temp table cases (n int primary key, fn text, expr text, e1 text, e2 text);
 grant all on cases to public;
 insert into cases values
@@ -525,8 +529,11 @@ insert into cases values
   (27, 'mark_message_read',            $$public.mark_message_read(pg_temp.id('msg_to_oa'))$$, '^ERR 42501$', '^$'),
   (28, 'mark_notifications_read',      $$public.mark_notifications_read(array[pg_temp.id('notif_oa1')])$$, '^0$', '^1$'),
   (29, 'mark_all_notifications_read',  $$public.mark_all_notifications_read(pg_temp.id('org_a'))$$, '^0$', '^1$'),
-  (30, 'save_push_subscription',       $$public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/oa2', 'BPorgadminorgadminorgadmin2', 'orgadminauth2')$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
-  (31, 'delete_push_subscription',     $$public.delete_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/oa')$$, '^false$', '^true$');
+  (30, 'save_push_subscription',       $$public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/oa2', 'BPorgadminorgadminorgadmin2', 'orgadminauth2')$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
+  (31, 'delete_push_subscription',     $$public.delete_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/oa')$$, '^false$', '^true$'),
+  (32, 'notice_acknowledgment_status', $$(select count(*) from public.notice_acknowledgment_status(pg_temp.id('notice_a')))$$, '^ERR 42501$', '^[1-9][0-9]*$'),
+  (33, 'my_notices',                   $$(select count(*) from public.my_notices())$$, '^0$', '^1$'),
+  (34, 'can_resend_person_invite',     $$public.can_resend_person_invite(pg_temp.id('org_a'), pg_temp.id('p_staff_a1'))$$, '^false$', '^true$');
 
 -- Every function a signed-in user can call through /rpc is in the table above (a new one must be added on purpose).
 select is((select coalesce(string_agg(p.proname, ', ' order by p.proname), '') from pg_proc p

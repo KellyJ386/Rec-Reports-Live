@@ -6,6 +6,25 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select plan(194);
 
+-- Independent of supabase/seed.sql: clear the mock Phase 2 business rows a seeded database may hold, so counts below see only this file's rows.
+-- Triggers are skipped (replica role) so neither the audit log nor the append-only guards see the cleanup; children go first.
+set session_replication_role = replica;
+delete from public.task_events;
+delete from public.acknowledgments;
+delete from public.notice_audiences;
+delete from public.notices;
+delete from public.workflow_rules;
+delete from public.tasks;
+delete from public.task_templates;
+delete from public.outbox_event_handlers;
+delete from public.outbox_events;
+delete from public.notification_deliveries;
+delete from public.notifications;
+delete from public.message_recipients;
+delete from public.messages;
+set session_replication_role = origin;
+
+
 -- BEGIN SHARED FIXTURE: byte-identical in every fixture-using test file (check: see supabase/tests/database/000_catalog_guards.test.sql header notes).
 --   org A: locations A1, A2;  org B: location B1.
 --   users: u_orgadmin_a (org-scope admin A), u_locadmin_a1 (admin @A1), u_manager_a1, u_staff_a1,
@@ -192,7 +211,7 @@ grant execute on function pg_temp.val(text), pg_temp.try_msg(text), pg_temp.ev(t
 -- Events used by the read and retry tests (all dead, so they can be retried; not due, so no claim picks them up).
 select pg_temp.ev('e_a1', 'org_a', 'loc_a1');
 select pg_temp.ev('e_a2', 'org_a', 'loc_a2');
-select pg_temp.ev('e_aw', 'org_a', null, 'message.sent');
+select pg_temp.ev('e_aw', 'org_a', null, 'notice.published');
 select pg_temp.ev('e_b1', 'org_b', 'loc_b1');
 update public.outbox_events set status = 'dead', attempts = 8, last_error = 'x' where id in (pg_temp.id('e_a1'), pg_temp.id('e_a2'), pg_temp.id('e_aw'), pg_temp.id('e_b1'));
 insert into public.outbox_event_handlers (event_id, handler, organization_id) values

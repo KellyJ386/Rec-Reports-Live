@@ -3,7 +3,7 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(56 + 2 * (select count(*)::int from pg_trigger g where g.tgname = 'zz_audit' and not g.tgisinternal and g.tgrelid in (select c.oid from pg_class c where c.relnamespace = 'public'::regnamespace)) + 4 * (select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
+select plan(58 + 2 * (select count(*)::int from pg_trigger g where g.tgname = 'zz_audit' and not g.tgisinternal and g.tgrelid in (select c.oid from pg_class c where c.relnamespace = 'public'::regnamespace)) + 4 * (select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
     and c.relname not in ('audit_log', 'modules', 'platform_admins')));
 
 -- BEGIN SHARED FIXTURE: byte-identical in every fixture-using test file (check: see supabase/tests/database/000_catalog_guards.test.sql header notes).
@@ -213,7 +213,7 @@ insert into public.notification_deliveries (organization_id, notification_id, pe
 select pg_temp.id(v.org), pg_temp.id('notif_' || v.k), pg_temp.id(v.person), 'in_app', 'sent', now()
 from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
 insert into public.push_subscriptions (organization_id, person_id, endpoint, p256dh, auth_secret)
-select pg_temp.id(v.org), pg_temp.id(v.person), 'https://push.example.test/' || v.k, 'BPfixturefixturefixturefixture' || v.k, 'fixtureauth' || v.k
+select pg_temp.id(v.org), pg_temp.id(v.person), 'https://fcm.googleapis.com/fcm/send/' || v.k, 'BPfixturefixturefixturefixture' || v.k, 'fixtureauth' || v.k
 from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
 insert into public.notification_preferences (organization_id, person_id, channel, enabled)
 select pg_temp.id(v.org), pg_temp.id(v.person), 'email', false from (values ('org_a', 'p_staff_a1'), ('org_b', 'p_staff_b1')) v (org, person);
@@ -404,11 +404,15 @@ select results_eq($$select changed_columns, new_row ->> 'secret' from public.aud
 -- ===========================================================================
 select pg_temp.act_as('postgres');
 do $$ begin
-  perform set_config('t.n_org_a', (select count(*) from public.audit_log where organization_id = pg_temp.id('org_a'))::text, true);
-  perform set_config('t.n_org_b', (select count(*) from public.audit_log where organization_id = pg_temp.id('org_b'))::text, true);
-  perform set_config('t.n_loc_a1', (select count(*) from public.audit_log where location_id = pg_temp.id('loc_a1'))::text, true);
-  perform set_config('t.n_all', (select count(*) from public.audit_log)::text, true);
+  -- rows tenants and platform admins may read: everything except the person-private tables, the worker ledger
+  -- and message events (000600 R3)
+  perform set_config('t.n_org_a', (select count(*) from public.audit_log where organization_id = pg_temp.id('org_a') and not (table_schema = 'public' and (table_name = any (private.audit_hidden_tables()) or (table_name = 'outbox_events' and private.outbox_type_is_private(coalesce(new_row ->> 'type', old_row ->> 'type'))))))::text, true);
+  perform set_config('t.n_org_b', (select count(*) from public.audit_log where organization_id = pg_temp.id('org_b') and not (table_schema = 'public' and (table_name = any (private.audit_hidden_tables()) or (table_name = 'outbox_events' and private.outbox_type_is_private(coalesce(new_row ->> 'type', old_row ->> 'type'))))))::text, true);
+  perform set_config('t.n_loc_a1', (select count(*) from public.audit_log where location_id = pg_temp.id('loc_a1') and not (table_schema = 'public' and (table_name = any (private.audit_hidden_tables()) or (table_name = 'outbox_events' and private.outbox_type_is_private(coalesce(new_row ->> 'type', old_row ->> 'type'))))))::text, true);
+  perform set_config('t.n_all', (select count(*) from public.audit_log where not (table_schema = 'public' and (table_name = any (private.audit_hidden_tables()) or (table_name = 'outbox_events' and private.outbox_type_is_private(coalesce(new_row ->> 'type', old_row ->> 'type'))))))::text, true);
+  perform set_config('t.n_hidden', (select count(*) from public.audit_log where not (not (table_schema = 'public' and (table_name = any (private.audit_hidden_tables()) or (table_name = 'outbox_events' and private.outbox_type_is_private(coalesce(new_row ->> 'type', old_row ->> 'type')))))))::text, true);
 end $$;
+select cmp_ok(current_setting('t.n_hidden')::bigint, '>', 0::bigint, 'fixture: there are hidden audit rows (person-private tables) that no tenant may read');
 select cmp_ok(current_setting('t.n_loc_a1')::bigint, '>', 0::bigint, 'fixture: A1 has audit rows');
 select cmp_ok(current_setting('t.n_org_a')::bigint, '>', current_setting('t.n_loc_a1')::bigint, 'fixture: org A has audit rows beyond A1''s (org-level and A2)');
 select cmp_ok((select count(*) from public.audit_log where organization_id is null), '>', 0::bigint, 'fixture: there are platform-level audit rows (null organization)');
@@ -418,7 +422,8 @@ select is((select count(*) from public.audit_log), current_setting('t.n_org_a'):
 select pg_temp.act_as('u_orgadmin_b');
 select is((select count(*) from public.audit_log), current_setting('t.n_org_b')::bigint, 'org admin B reads every audit row of org B, and nothing else');
 select pg_temp.act_as('u_platform');
-select is((select count(*) from public.audit_log), current_setting('t.n_all')::bigint, 'a platform admin reads every audit row, platform rows included');
+select is((select count(*) from public.audit_log), current_setting('t.n_all')::bigint, 'a platform admin reads every audit row except the hidden ones, platform rows included');
+select is((select count(*) from public.audit_log where table_name = any (private.audit_hidden_tables())), 0::bigint, 'a platform admin reads no audit row of the person-private tables');
 select pg_temp.act_as('u_locadmin_a1');
 select is((select count(*) from public.audit_log), current_setting('t.n_loc_a1')::bigint, 'location admin A1 reads exactly the rows whose location is A1');
 select is((select count(*) from public.audit_log where location_id is distinct from pg_temp.id('loc_a1')), 0::bigint, 'location admin A1 sees no org-level, A2 or B rows');

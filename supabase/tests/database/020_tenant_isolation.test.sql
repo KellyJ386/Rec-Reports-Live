@@ -218,7 +218,7 @@ insert into public.notification_deliveries (organization_id, notification_id, pe
 select pg_temp.id(v.org), pg_temp.id('notif_' || v.k), pg_temp.id(v.person), 'in_app', 'sent', now()
 from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
 insert into public.push_subscriptions (organization_id, person_id, endpoint, p256dh, auth_secret)
-select pg_temp.id(v.org), pg_temp.id(v.person), 'https://push.example.test/' || v.k, 'BPfixturefixturefixturefixture' || v.k, 'fixtureauth' || v.k
+select pg_temp.id(v.org), pg_temp.id(v.person), 'https://fcm.googleapis.com/fcm/send/' || v.k, 'BPfixturefixturefixturefixture' || v.k, 'fixtureauth' || v.k
 from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
 insert into public.notification_preferences (organization_id, person_id, channel, enabled)
 select pg_temp.id(v.org), pg_temp.id(v.person), 'email', false from (values ('org_a', 'p_staff_a1'), ('org_b', 'p_staff_b1')) v (org, person);

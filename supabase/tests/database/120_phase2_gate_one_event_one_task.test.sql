@@ -14,7 +14,26 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(144);
+select plan(145);
+
+-- Independent of supabase/seed.sql: clear the mock Phase 2 business rows a seeded database may hold, so counts below see only this file's rows.
+-- Triggers are skipped (replica role) so neither the audit log nor the append-only guards see the cleanup; children go first.
+set session_replication_role = replica;
+delete from public.task_events;
+delete from public.acknowledgments;
+delete from public.notice_audiences;
+delete from public.notices;
+delete from public.workflow_rules;
+delete from public.tasks;
+delete from public.task_templates;
+delete from public.outbox_event_handlers;
+delete from public.outbox_events;
+delete from public.notification_deliveries;
+delete from public.notifications;
+delete from public.message_recipients;
+delete from public.messages;
+set session_replication_role = origin;
+
 
 -- BEGIN SHARED FIXTURE: byte-identical in every fixture-using test file (check: see supabase/tests/database/000_catalog_guards.test.sql header notes).
 --   org A: locations A1, A2;  org B: location B1.
@@ -521,15 +540,11 @@ select is(private.workflow_condition_matches('{"all":[{"field":"k","op":"in","va
 select is(private.workflow_condition_matches('{"all":[{"field":"k","op":"in","value":["a","b"]},{"field":"n","op":"eq","value":true}]}', '{"k":"c","n":true}'), false, 'condition: one failing clause fails the rule');
 select is(private.workflow_condition_matches('{"all":[{"field":"k","op":"eq","value":"x"}]}', '{"k":null}'), false, 'condition: a payload field that is JSON null does not match "x"');
 select is(private.workflow_condition_matches('{"all":[{"field":"missing","op":"in","value":["x","y"]}]}', '{"other":"x"}'), false, 'condition: a missing payload field does not match (in)');
--- KNOWN GAP (reported, not fixed here): an eq clause on a field that is ABSENT from the payload evaluates to NULL, and the
--- NOT EXISTS over the failing clauses then reads NULL as "no clause failed", so the rule matches. Marked TODO so the
--- suite stays green; it turns into a "TODO passed" the day the function is fixed.
-select todo_start('private.workflow_condition_matches: an absent payload field must not satisfy an eq clause (currently it does: NULL-pass)');
+-- (000600 R16a) an eq or in clause on a field that is absent from the payload, or JSON null, never matches.
 select is(private.workflow_condition_matches('{"all":[{"field":"missing","op":"eq","value":"x"}]}', '{}'), false, 'condition: a missing payload field does not match (eq)');
 select pg_temp.act_as('service_role');
 select is((select count(*) from public.match_workflow_rules((select v::uuid from gs where k = 'e_nokind')) m where m.rule_id = pg_temp.id('rule2')), 0::bigint,
   'a booking event with no "kind" in its payload does not match the "kind = party" rule');
-select todo_end();
 select is((select count(*) from public.match_workflow_rules((select v::uuid from gs where k = 'e_nokind')) m where m.rule_id = pg_temp.id('rule1')), 1::bigint,
   'twin: the same event still matches the rule without a condition');
 select pg_temp.act_as('postgres');
@@ -613,7 +628,12 @@ select is((select next_attempt_at from public.outbox_events where type = 'notice
 select pg_temp.act_as('service_role');
 select is((select count(*) from public.claim_outbox_events('w12', 10, 60) where type = 'notice.published'), 0::bigint, 'a worker does not pick up a scheduled notice before its time');
 select pg_temp.act_as('postgres');
+select pg_temp.act_as('service_role');
+select is((select count(*) from public.notice_audience_person_ids(pg_temp.id('gate_notice'))), 0::bigint, 'fan-out: a notice that is published but not live yet (publish time an hour away) has no audience to notify');
+select pg_temp.act_as('postgres');
+-- the hour passes: the event is due and the notice is live
 update public.outbox_events set next_attempt_at = now() where type = 'notice.published';
+update public.notices set publish_at = now() where id = pg_temp.id('gate_notice');
 select pg_temp.act_as('service_role');
 select is((select array_agg(x order by x) from public.notice_audience_person_ids(pg_temp.id('gate_notice')) x),
           (select array_agg(p order by p) from unnest(array[pg_temp.id('p_orgadmin_a'), pg_temp.id('p_locadmin_a1'), pg_temp.id('p_manager_a1'), pg_temp.id('p_staff_a1')]) p),

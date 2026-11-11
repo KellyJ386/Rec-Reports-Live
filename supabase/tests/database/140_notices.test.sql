@@ -7,6 +7,25 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select plan(274);
 
+-- Independent of supabase/seed.sql: clear the mock Phase 2 business rows a seeded database may hold, so counts below see only this file's rows.
+-- Triggers are skipped (replica role) so neither the audit log nor the append-only guards see the cleanup; children go first.
+set session_replication_role = replica;
+delete from public.task_events;
+delete from public.acknowledgments;
+delete from public.notice_audiences;
+delete from public.notices;
+delete from public.workflow_rules;
+delete from public.tasks;
+delete from public.task_templates;
+delete from public.outbox_event_handlers;
+delete from public.outbox_events;
+delete from public.notification_deliveries;
+delete from public.notifications;
+delete from public.message_recipients;
+delete from public.messages;
+set session_replication_role = origin;
+
+
 -- BEGIN SHARED FIXTURE: byte-identical in every fixture-using test file (check: see supabase/tests/database/000_catalog_guards.test.sql header notes).
 --   org A: locations A1, A2;  org B: location B1.
 --   users: u_orgadmin_a (org-scope admin A), u_locadmin_a1 (admin @A1), u_manager_a1, u_staff_a1,
@@ -412,8 +431,7 @@ select is((select count(*) from public.outbox_events where type like 'notice.%')
 -- expiry before the publish time rolls the whole call back
 select pg_temp.act_as('u_manager_a1');
 update public.notices set expires_at = now() + interval '1 hour' where id = pg_temp.id('n_a1');
--- Observation: the refusal is the table CHECK (23514), not a friendly 22023 from publish_notice.
-select is(pg_temp.try($$select public.publish_notice(pg_temp.id('n_a1'), now() + interval '2 days')$$), '23514', 'publish: a publish time after the expiry is refused (CHECK 23514)');
+select is(pg_temp.try_msg($$select public.publish_notice(pg_temp.id('n_a1'), now() + interval '2 days')$$), '22023 the notice would expire before it is shown', 'publish: a publish time after the expiry is refused (22023, validated before anything is written)');
 select pg_temp.act_as('postgres');
 select results_eq($$select status, published_at is null, publish_at is null from public.notices where id = pg_temp.id('n_a1')$$, $$select 'draft'::text, true, true$$, 'and the notice is still a plain draft (the call was rolled back)');
 select is((select count(*) from public.outbox_events where type like 'notice.%'), 0::bigint, 'with no event');

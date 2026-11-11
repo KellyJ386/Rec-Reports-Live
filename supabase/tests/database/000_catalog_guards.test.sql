@@ -19,7 +19,7 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(38);
+select plan(40);
 
 -- Guarded objects: ordinary relations and functions in public/private that do
 -- not belong to an extension.
@@ -288,7 +288,9 @@ select is((select coalesce(string_agg(sig, ', ' order by sig), '') from gf
                                  'cancel_task', 'add_task_comment', 'publish_notice', 'archive_notice',
                                  'acknowledge_notice', 'send_message', 'mark_message_read',
                                  'mark_notifications_read', 'mark_all_notifications_read',
-                                 'save_push_subscription', 'delete_push_subscription')),
+                                 'save_push_subscription', 'delete_push_subscription',
+                                 -- Phase 2 review fixes (000600)
+                                 'notice_acknowledgment_status', 'my_notices', 'can_resend_person_invite')),
   '', 'only the reviewed SECURITY DEFINER functions in public are callable by authenticated through /rpc (add new ones here on purpose)');
 
 select is((select coalesce(string_agg(x, ', '), '') from unnest(array[
@@ -301,9 +303,24 @@ select is((select coalesce(string_agg(x, ', '), '') from unnest(array[
              'cancel_task', 'add_task_comment', 'publish_notice', 'archive_notice',
              'acknowledge_notice', 'send_message', 'mark_message_read',
              'mark_notifications_read', 'mark_all_notifications_read',
-             'save_push_subscription', 'delete_push_subscription']) x
+             'save_push_subscription', 'delete_push_subscription',
+             'notice_acknowledgment_status', 'my_notices', 'can_resend_person_invite']) x
            where not exists (select 1 from gf where gf.nspname = 'public' and gf.proname = x and gf.prosecdef)),
   '', 'the /rpc allowlist has no stale entries');
+
+-- Phase 2 review fixes (000600): no timestamp or date column accepts +/-infinity. Every such column of every
+-- table in public (audit_log excepted: only its trigger writes it, from now()) carries a CHECK named
+-- finite_<column> that uses isfinite(). A new table with a time column has to follow the same rule.
+select is((select string_agg(c.relname || '.' || a.attname, ', ' order by c.relname, a.attname)
+           from pg_attribute a join pg_class c on c.oid = a.attrelid
+           where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p') and c.relname <> 'audit_log'
+             and a.attnum > 0 and not a.attisdropped and a.atttypid in ('timestamptz'::regtype, 'timestamp'::regtype, 'date'::regtype)
+             and not exists (select 1 from pg_constraint k where k.conrelid = c.oid and k.contype = 'c'
+                             and k.conname = left('finite_' || a.attname, 63) and pg_get_constraintdef(k.oid) like '%isfinite(%')),
+  null, 'every timestamp and date column in public has a finite_<column> CHECK using isfinite()');
+select is((select count(*) from pg_constraint k where k.conrelid = 'public.push_subscriptions'::regclass and k.contype = 'c'
+             and k.conname = 'push_subscriptions_endpoint_allowed' and pg_get_constraintdef(k.oid) like '%push_endpoint_allowed%'),
+  1::bigint, 'push_subscriptions.endpoint is held to the push allowlist by a CHECK');
 
 -- Functions documented as service_role only (the worker API, the rate limiter, the fan-out helpers).
 -- Each must be executable by service_role and by neither authenticated nor anon (a user with the
@@ -317,7 +334,14 @@ insert into svc_only values
   ('public', 'match_workflow_rules'), ('public', 'create_task_from_event'), ('public', 'emit_overdue_task_events'),
   ('public', 'create_notification'), ('public', 'notice_audience_person_ids'), ('public', 'task_recipient_person_ids'),
   ('public', 'claim_notification_deliveries'), ('public', 'complete_notification_delivery'),
-  ('public', 'fail_notification_delivery'), ('public', 'skip_notification_delivery'), ('public', 'disable_push_subscription');
+  ('public', 'fail_notification_delivery'), ('public', 'skip_notification_delivery'), ('public', 'disable_push_subscription'),
+  -- Phase 2 review fixes (000600): batch create, worker read functions, claim release/extend, escalation
+  ('public', 'create_notifications'), ('public', 'worker_task_for_event'), ('public', 'worker_notice_for_event'),
+  ('public', 'worker_notification_for_delivery'), ('public', 'worker_email_for_delivery'),
+  ('public', 'worker_push_subscriptions_for_delivery'), ('public', 'release_outbox_event'),
+  ('public', 'release_notification_delivery'), ('public', 'extend_outbox_lock'), ('public', 'escalate_overdue_task'),
+  -- 000700: message recipients for the notify handler
+  ('public', 'worker_message_recipients_for_event');
 
 select is((select coalesce(string_agg(g.sig, ', ' order by g.sig), '') from gf g
            join svc_only s on s.schema_name = g.nspname and s.proname = g.proname

@@ -8,6 +8,25 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select plan(430);
 
+-- Independent of supabase/seed.sql: clear the mock Phase 2 business rows a seeded database may hold, so counts below see only this file's rows.
+-- Triggers are skipped (replica role) so neither the audit log nor the append-only guards see the cleanup; children go first.
+set session_replication_role = replica;
+delete from public.task_events;
+delete from public.acknowledgments;
+delete from public.notice_audiences;
+delete from public.notices;
+delete from public.workflow_rules;
+delete from public.tasks;
+delete from public.task_templates;
+delete from public.outbox_event_handlers;
+delete from public.outbox_events;
+delete from public.notification_deliveries;
+delete from public.notifications;
+delete from public.message_recipients;
+delete from public.messages;
+set session_replication_role = origin;
+
+
 -- BEGIN SHARED FIXTURE: byte-identical in every fixture-using test file (check: see supabase/tests/database/000_catalog_guards.test.sql header notes).
 --   org A: locations A1, A2;  org B: location B1.
 --   users: u_orgadmin_a (org-scope admin A), u_locadmin_a1 (admin @A1), u_manager_a1, u_staff_a1,
@@ -212,9 +231,9 @@ insert into public.role_assignments (organization_id, person_id, role_id, locati
 -- 0. Set-up of private rows: devices and preferences (as the owner), notifications through the worker function
 -- ===========================================================================
 insert into public.push_subscriptions (id, organization_id, person_id, endpoint, p256dh, auth_secret, user_agent) values
-  (pg_temp.id('ps_s'), pg_temp.id('org_a'), pg_temp.id('p_staff_a1'),   'https://push.example.test/SECRET-ENDPOINT-S', 'BPsecretsecretsecretsecretS', 'SECRETAUTHs', 'UA-S'),
-  (pg_temp.id('ps_m'), pg_temp.id('org_a'), pg_temp.id('p_manager_a1'), 'https://push.example.test/SECRET-ENDPOINT-M', 'BPsecretsecretsecretsecretM', 'SECRETAUTHm', 'UA-M'),
-  (pg_temp.id('ps_b'), pg_temp.id('org_b'), pg_temp.id('p_staff_b1'),   'https://push.example.test/SECRET-ENDPOINT-B', 'BPsecretsecretsecretsecretB', 'SECRETAUTHb', 'UA-B');
+  (pg_temp.id('ps_s'), pg_temp.id('org_a'), pg_temp.id('p_staff_a1'),   'https://fcm.googleapis.com/fcm/send/SECRET-ENDPOINT-S', 'BPsecretsecretsecretsecretS', 'SECRETAUTHs', 'UA-S'),
+  (pg_temp.id('ps_m'), pg_temp.id('org_a'), pg_temp.id('p_manager_a1'), 'https://fcm.googleapis.com/fcm/send/SECRET-ENDPOINT-M', 'BPsecretsecretsecretsecretM', 'SECRETAUTHm', 'UA-M'),
+  (pg_temp.id('ps_b'), pg_temp.id('org_b'), pg_temp.id('p_staff_b1'),   'https://fcm.googleapis.com/fcm/send/SECRET-ENDPOINT-B', 'BPsecretsecretsecretsecretB', 'SECRETAUTHb', 'UA-B');
 insert into public.notification_preferences (id, organization_id, person_id, channel, enabled) values
   (pg_temp.id('pref_s'), pg_temp.id('org_a'), pg_temp.id('p_staff_a1'),   'email', false),
   (pg_temp.id('pref_m'), pg_temp.id('org_a'), pg_temp.id('p_manager_a1'), 'push',  false),
@@ -331,8 +350,8 @@ begin
       (w, 'delete notification', pg_temp.try($q$delete from public.notifications$q$)),
       (w, 'update delivery', pg_temp.try($q$update public.notification_deliveries set status = 'sent'$q$)),
       (w, 'delete delivery', pg_temp.try($q$delete from public.notification_deliveries$q$)),
-      (w, 'insert push', pg_temp.try($q$insert into public.push_subscriptions (organization_id, person_id, endpoint, p256dh, auth_secret) values (pg_temp.id('org_a'), pg_temp.id('p_staff_a1'), 'https://push.example.test/forged', 'BPforgedforgedforgedforged', 'forgedauth1')$q$)),
-      (w, 'update push', pg_temp.try($q$update public.push_subscriptions set endpoint = 'https://push.example.test/hijack'$q$));
+      (w, 'insert push', pg_temp.try($q$insert into public.push_subscriptions (organization_id, person_id, endpoint, p256dh, auth_secret) values (pg_temp.id('org_a'), pg_temp.id('p_staff_a1'), 'https://fcm.googleapis.com/fcm/send/forged', 'BPforgedforgedforgedforged', 'forgedauth1')$q$)),
+      (w, 'update push', pg_temp.try($q$update public.push_subscriptions set endpoint = 'https://fcm.googleapis.com/fcm/send/hijack'$q$));
   end loop;
   perform pg_temp.act_as('postgres');
 end $$;
@@ -355,7 +374,7 @@ select is(pg_temp.try_msg($$select public.send_message(pg_temp.id('org_a'), arra
 select pg_temp.act_as('postgres');
 select results_eq($$select count(*), min(e.organization_id::text), min(e.entity_table) from public.outbox_events e where e.type = 'message.sent'$$, $$select 2::bigint, pg_temp.id('org_a')::text, 'messages'::text$$, 'each sent message wrote exactly one message.sent event (2 so far)');
 select is((select count(*) from public.outbox_events e where e.type = 'message.sent' and (e.payload ? 'body' or e.payload::text like '%private words%' or e.payload::text like '%reply%')), 0::bigint, 'and the event carries ids only, never the text');
-select is((select array(select jsonb_object_keys(payload) order by 1) from public.outbox_events where type = 'message.sent' limit 1), array['message_id', 'recipient_person_ids', 'sender_person_id'], 'the event payload keys are message_id, recipient_person_ids, sender_person_id');
+select is((select array(select jsonb_object_keys(payload) order by 1) from public.outbox_events where type = 'message.sent' limit 1), array['message_id'], 'the event payload is the message id only (no sender, no recipients)');
 select results_eq($$select sender_person_id, body from public.messages where body like 'LIT-MSG-1%'$$, $$select pg_temp.id('p_staff_a1'), 'LIT-MSG-1 private words'$$, 'the message is stored with the caller as sender (not chosen by the caller)');
 select is((select count(*) from public.message_recipients r join public.messages m on m.id = r.message_id where m.body like 'LIT-MSG-1%' and r.person_id = pg_temp.id('p_manager_a1') and r.read_at is null), 1::bigint, 'with one unread recipient row');
 
@@ -475,7 +494,7 @@ select is((select count(*) from public.message_recipients r join public.messages
 -- Devices and preferences: staff A1 = email muted + active device; manager A1 = push muted + active device (set up above);
 -- staff A2 = nothing; location admin A1 = only a disabled device.
 insert into public.push_subscriptions (id, organization_id, person_id, endpoint, p256dh, auth_secret, disabled_at)
-values (pg_temp.id('ps_la'), pg_temp.id('org_a'), pg_temp.id('p_locadmin_a1'), 'https://push.example.test/dead', 'BPdeaddeaddeaddeaddead1', 'deadauth1', now());
+values (pg_temp.id('ps_la'), pg_temp.id('org_a'), pg_temp.id('p_locadmin_a1'), 'https://fcm.googleapis.com/fcm/send/dead', 'BPdeaddeaddeaddeaddead1', 'deadauth1', now());
 select pg_temp.mkev('c1', 'org_a', '{"urgency":"high"}');
 select pg_temp.mkev('c2', 'org_a', '{"urgency":"bogus"}');
 select pg_temp.mkev('c3');
@@ -626,73 +645,73 @@ select pg_temp.act_as('postgres');
 -- 6. Push subscriptions: save, refresh, delete, own only
 -- ===========================================================================
 select pg_temp.act_as('u_staff_a2');
-select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/a2-phone', 'BPa2phonea2phonea2phone1', 'a2authsecret', 'Phone UA')$$), 'ok', 'save_push_subscription: staff A2 registers a device');
+select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/a2-phone', 'BPa2phonea2phonea2phone1', 'a2authsecret', 'Phone UA')$$), 'ok', 'save_push_subscription: staff A2 registers a device');
 select pg_temp.act_as('postgres');
-select results_eq($$select person_id, organization_id, user_agent, disabled_at is null from public.push_subscriptions where endpoint = 'https://push.example.test/a2-phone'$$,
+select results_eq($$select person_id, organization_id, user_agent, disabled_at is null from public.push_subscriptions where endpoint = 'https://fcm.googleapis.com/fcm/send/a2-phone'$$,
   $$select pg_temp.id('p_staff_a2'), pg_temp.id('org_a'), 'Phone UA'::text, true$$, 'the device belongs to the caller''s own person');
-create temp table ps_first as select id from public.push_subscriptions where endpoint = 'https://push.example.test/a2-phone';
+create temp table ps_first as select id from public.push_subscriptions where endpoint = 'https://fcm.googleapis.com/fcm/send/a2-phone';
 grant all on ps_first to public;
-update public.push_subscriptions set disabled_at = now() where endpoint = 'https://push.example.test/a2-phone';
+update public.push_subscriptions set disabled_at = now() where endpoint = 'https://fcm.googleapis.com/fcm/send/a2-phone';
 select pg_temp.act_as('u_staff_a2');
-select is(public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/a2-phone', 'BPnewkeynewkeynewkey123', 'newauthsecret', 'New UA'), (select id from ps_first), 'saving the same endpoint again returns the same id (upsert)');
+select is(public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/a2-phone', 'BPnewkeynewkeynewkey123', 'newauthsecret', 'New UA'), (select id from ps_first), 'saving the same endpoint again returns the same id (upsert)');
 select pg_temp.act_as('postgres');
-select results_eq($$select p256dh, auth_secret, user_agent, disabled_at is null from public.push_subscriptions where endpoint = 'https://push.example.test/a2-phone'$$,
+select results_eq($$select p256dh, auth_secret, user_agent, disabled_at is null from public.push_subscriptions where endpoint = 'https://fcm.googleapis.com/fcm/send/a2-phone'$$,
   $$select 'BPnewkeynewkeynewkey123'::text, 'newauthsecret'::text, 'New UA'::text, true$$, 'the keys are refreshed and a disabled device is re-enabled');
 select is((select count(*) from public.push_subscriptions where person_id = pg_temp.id('p_staff_a2')), 1::bigint, 'still one device');
 create temp table pv (n int, label text, res text, expect text);
 grant all on pv to public;
 select pg_temp.act_as('u_staff_a2');
 insert into pv values
-  (1, 'an http (not https) endpoint',  pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'http://push.example.test/x', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '23514'),
-  (2, 'an endpoint with a space',      pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/a b', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '23514'),
-  (3, 'a 2001 character endpoint',     pg_temp.try_msg(format($f$select public.save_push_subscription(pg_temp.id('org_a'), %L, 'BPa2phonea2phonea2phone1', 'a2authsecret')$f$, 'https://x.example/' || repeat('a', 1983))), '23514'),
-  (4, 'a null endpoint',               pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), null, 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '23502'),
-  (5, 'a short p256dh key',            pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/y', 'short', 'a2authsecret')$$), '23514'),
-  (6, 'a p256dh key with a bad character', pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/y', 'BPa2phone a2phonea2phone1', 'a2authsecret')$$), '23514'),
-  (7, 'a short auth secret',           pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/y', 'BPa2phonea2phonea2phone1', 'short')$$), '23514'),
-  (8, 'a null auth secret',            pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/y', 'BPa2phonea2phonea2phone1', null)$$), '23502'),
-  (9, 'a different organization',      pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_b'), 'https://push.example.test/y', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not allowed'),
-  (10, 'an unknown organization',      pg_temp.try_msg($$select public.save_push_subscription(gen_random_uuid(), 'https://push.example.test/y', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not allowed'),
-  (11, 'a null organization',          pg_temp.try_msg($$select public.save_push_subscription(null, 'https://push.example.test/y', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not allowed');
+  (1, 'an http (not https) endpoint',  pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'http://push.example.test/x', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '22023 this push service is not supported'),
+  (2, 'an endpoint with a space',      pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/a b', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '22023 this push service is not supported'),
+  (3, 'a 2001 character endpoint',     pg_temp.try_msg(format($f$select public.save_push_subscription(pg_temp.id('org_a'), %L, 'BPa2phonea2phonea2phone1', 'a2authsecret')$f$, 'https://fcm.googleapis.com/' || repeat('a', 1974))), '22023 this push service is not supported'),
+  (4, 'a null endpoint',               pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), null, 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '22023 this push service is not supported'),
+  (5, 'a short p256dh key',            pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/y', 'short', 'a2authsecret')$$), '23514'),
+  (6, 'a p256dh key with a bad character', pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/y', 'BPa2phone a2phonea2phone1', 'a2authsecret')$$), '23514'),
+  (7, 'a short auth secret',           pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/y', 'BPa2phonea2phonea2phone1', 'short')$$), '23514'),
+  (8, 'a null auth secret',            pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/y', 'BPa2phonea2phonea2phone1', null)$$), '23502'),
+  (9, 'a different organization',      pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_b'), 'https://fcm.googleapis.com/fcm/send/y', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not allowed'),
+  (10, 'an unknown organization',      pg_temp.try_msg($$select public.save_push_subscription(gen_random_uuid(), 'https://fcm.googleapis.com/fcm/send/y', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not allowed'),
+  (11, 'a null organization',          pg_temp.try_msg($$select public.save_push_subscription(null, 'https://fcm.googleapis.com/fcm/send/y', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not allowed');
 select pg_temp.act_as('postgres');
 select is((select left(res, length(expect)) from pv where n = t.n), t.expect, 'save_push_subscription refuses ' || t.label) from (select n, label, expect from pv) t order by t.n;
-select is((select count(*) from public.push_subscriptions where endpoint like 'https://push.example.test/y%'), 0::bigint, 'none of those left a device behind');
+select is((select count(*) from public.push_subscriptions where endpoint like 'https://fcm.googleapis.com/fcm/send/y%'), 0::bigint, 'none of those left a device behind');
 select pg_temp.act_as('u_staff_a2');
-select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/y', 'BPa2phonea2phonea2phone1', 'a2authsecret', repeat('u', 500))$$), 'ok', 'twin: a valid device (an over-long user agent is cut to 300 characters)');
+select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/y', 'BPa2phonea2phonea2phone1', 'a2authsecret', repeat('u', 500))$$), 'ok', 'twin: a valid device (an over-long user agent is cut to 300 characters)');
 select pg_temp.act_as('postgres');
-select is((select char_length(user_agent) from public.push_subscriptions where endpoint = 'https://push.example.test/y'), 300, 'the user agent was cut to 300');
+select is((select char_length(user_agent) from public.push_subscriptions where endpoint = 'https://fcm.googleapis.com/fcm/send/y'), 300, 'the user agent was cut to 300');
 select pg_temp.act_as('u_noaccount');
-select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/n', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not allowed', 'a user with no account cannot save a device');
+select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/n', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not allowed', 'a user with no account cannot save a device');
 select pg_temp.act_as('u_disabled_a');
-select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/n', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not allowed', 'nor a disabled account');
+select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/n', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not allowed', 'nor a disabled account');
 select pg_temp.act_as('u_platform');
-select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/n', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not allowed', 'nor a platform admin (no person in the organization)');
+select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/n', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not allowed', 'nor a platform admin (no person in the organization)');
 select pg_temp.act_as('anon');
-select is(pg_temp.try($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/n', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501', 'nor anon');
+select is(pg_temp.try($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/n', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501', 'nor anon');
 select pg_temp.act_as('service_role');
-select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/n', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not signed in', 'nor the server key with no user');
+select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/n', 'BPa2phonea2phonea2phone1', 'a2authsecret')$$), '42501 not signed in', 'nor the server key with no user');
 select pg_temp.act_as('postgres');
 -- the same endpoint under another person is a separate device (unique per person and endpoint)
 select pg_temp.act_as('u_manager_a1');
-select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/a2-phone', 'BPmanagermanagermanager1', 'mgrauthsecret')$$), 'ok', 'the same endpoint saved by manager A1 is their own device');
+select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/a2-phone', 'BPmanagermanagermanager1', 'mgrauthsecret')$$), 'ok', 'the same endpoint saved by manager A1: the device moves to them (an endpoint belongs to one person)');
 select pg_temp.act_as('postgres');
-select results_eq($$select person_id from public.push_subscriptions where endpoint = 'https://push.example.test/a2-phone' order by person_id$$,
-  $$select p from (values (pg_temp.id('p_staff_a2')), (pg_temp.id('p_manager_a1'))) v (p) order by p$$, 'two rows, one per person: manager A1 did not take over staff A2''s device');
+select results_eq($$select person_id from public.push_subscriptions where endpoint = 'https://fcm.googleapis.com/fcm/send/a2-phone' order by person_id$$,
+  $$select pg_temp.id('p_manager_a1')$$, 'one row, now manager A1''s: saving an endpoint removes every other person''s row for it (shared phone)');
 -- delete
 select pg_temp.act_as('u_staff_a1');
-select is(public.delete_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/a2-phone'), false, 'delete_push_subscription: staff A1 cannot delete a device with that endpoint (they have none: false)');
-select is(public.delete_push_subscription(pg_temp.id('org_b'), 'https://push.example.test/SECRET-ENDPOINT-S'), false, 'and not with the wrong organization');
+select is(public.delete_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/a2-phone'), false, 'delete_push_subscription: staff A1 cannot delete a device with that endpoint (they have none: false)');
+select is(public.delete_push_subscription(pg_temp.id('org_b'), 'https://fcm.googleapis.com/fcm/send/SECRET-ENDPOINT-S'), false, 'and not with the wrong organization');
 select is(pg_temp.affected($$delete from public.push_subscriptions where person_id <> pg_temp.id('p_staff_a1')$$), 0::bigint, 'a direct delete reaches only their own rows (0 of other people''s)');
 select pg_temp.act_as('u_orgadmin_a');
-select is(public.delete_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/SECRET-ENDPOINT-S'), false, 'an org admin cannot delete staff A1''s device');
+select is(public.delete_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/SECRET-ENDPOINT-S'), false, 'an org admin cannot delete staff A1''s device');
 select is(pg_temp.affected($$delete from public.push_subscriptions$$), 0::bigint, 'nor by a direct delete');
 select pg_temp.act_as('u_platform');
-select is(public.delete_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/SECRET-ENDPOINT-S'), false, 'nor a platform admin');
+select is(public.delete_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/SECRET-ENDPOINT-S'), false, 'nor a platform admin');
 select pg_temp.act_as('postgres');
 select is((select count(*) from public.push_subscriptions where id = pg_temp.id('ps_s')), 1::bigint, 'staff A1''s device is still there');
 select pg_temp.act_as('u_staff_a1');
-select is(public.delete_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/SECRET-ENDPOINT-S'), true, 'twin: staff A1 deletes their own device by endpoint');
-select is(public.delete_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/SECRET-ENDPOINT-S'), false, 'a second delete finds nothing');
+select is(public.delete_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/SECRET-ENDPOINT-S'), true, 'twin: staff A1 deletes their own device by endpoint');
+select is(public.delete_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/SECRET-ENDPOINT-S'), false, 'a second delete finds nothing');
 select pg_temp.act_as('u_manager_a1');
 select is(pg_temp.affected($$delete from public.push_subscriptions where id = pg_temp.id('ps_m')$$), 1::bigint, 'twin: a direct delete of their own device works');
 select pg_temp.act_as('anon');
@@ -778,7 +797,7 @@ select pg_temp.act_as('postgres');
 -- 9. The delivery worker: claim, complete, fail, skip, lock expiry, disable device
 -- ===========================================================================
 -- staff A2 gets a device so that email and push are both pending; six notifications (l1..l6)
-insert into public.push_subscriptions (id, organization_id, person_id, endpoint, p256dh, auth_secret) values (pg_temp.id('ps_l'), pg_temp.id('org_a'), pg_temp.id('p_staff_a2'), 'https://push.example.test/lifecycle', 'BPlifecyclelifecycle123', 'lifecycleauth');
+insert into public.push_subscriptions (id, organization_id, person_id, endpoint, p256dh, auth_secret) values (pg_temp.id('ps_l'), pg_temp.id('org_a'), pg_temp.id('p_staff_a2'), 'https://fcm.googleapis.com/fcm/send/lifecycle', 'BPlifecyclelifecycle123', 'lifecycleauth');
 update public.push_subscriptions set disabled_at = null where person_id = pg_temp.id('p_staff_a2');
 -- (the earlier a2-phone and y devices are on staff A2 too; remove them so the lifecycle starts clean of other pending work)
 update public.notification_deliveries set status = 'skipped', last_error = 'cleanup' where status = 'pending';

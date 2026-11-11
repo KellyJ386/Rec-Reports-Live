@@ -7,6 +7,25 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select plan(201);
 
+-- Independent of supabase/seed.sql: clear the mock Phase 2 business rows a seeded database may hold, so counts below see only this file's rows.
+-- Triggers are skipped (replica role) so neither the audit log nor the append-only guards see the cleanup; children go first.
+set session_replication_role = replica;
+delete from public.task_events;
+delete from public.acknowledgments;
+delete from public.notice_audiences;
+delete from public.notices;
+delete from public.workflow_rules;
+delete from public.tasks;
+delete from public.task_templates;
+delete from public.outbox_event_handlers;
+delete from public.outbox_events;
+delete from public.notification_deliveries;
+delete from public.notifications;
+delete from public.message_recipients;
+delete from public.messages;
+set session_replication_role = origin;
+
+
 -- BEGIN SHARED FIXTURE: byte-identical in every fixture-using test file (check: see supabase/tests/database/000_catalog_guards.test.sql header notes).
 --   org A: locations A1, A2;  org B: location B1.
 --   users: u_orgadmin_a (org-scope admin A), u_locadmin_a1 (admin @A1), u_manager_a1, u_staff_a1,
@@ -667,7 +686,7 @@ select is(pg_temp.try($$insert into public.workflow_rules (organization_id, loca
 select is((select enabled from public.workflow_rules where name = 'sneaky'), false, '...but it is stored disabled (a new rule is always created disabled)');
 select is(pg_temp.affected($$update public.workflow_rules set enabled = true where name = 'sneaky'$$), 1::bigint, 'and the manager can enable it afterwards');
 select is(pg_temp.try($$insert into public.workflow_rules (organization_id, location_id, name, event_type, task_template_id) values (pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'foreign template', 'booking.confirmed', pg_temp.id('cfg_b'))$$), '42501', 'configuration: a rule cannot use another organization''s template');
-select is(pg_temp.try($$insert into public.workflow_rules (organization_id, location_id, name, event_type, task_template_id) values (pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'hidden template', 'booking.confirmed', pg_temp.id('cfg_a2'))$$), '23514', 'configuration: a rule at A1 cannot use a template that belongs to A2');
+select is(pg_temp.try($$insert into public.workflow_rules (organization_id, location_id, name, event_type, task_template_id) values (pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'hidden template', 'booking.confirmed', pg_temp.id('cfg_a2'))$$), '42501', 'configuration: a rule at A1 cannot use a template that belongs to A2 (uniform 42501, same as a missing template)');
 select is(pg_temp.try($$insert into public.workflow_rules (organization_id, location_id, name, event_type, task_template_id) values (pg_temp.id('org_a'), null, 'mgr wide rule', 'booking.confirmed', pg_temp.id('cfg_wide'))$$), '42501', 'configuration: manager A1 cannot create an organization-wide rule');
 select pg_temp.act_as('u_orgadmin_a');
 select is((select count(*) from public.task_templates), (select count(*) from public.task_templates where organization_id = pg_temp.id('org_a')), 'configuration: org admin A reads every template of org A and none of org B');

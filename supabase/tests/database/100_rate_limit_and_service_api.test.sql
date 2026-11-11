@@ -5,7 +5,26 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(233);
+select plan(293);
+
+-- Independent of supabase/seed.sql: clear the mock Phase 2 business rows a seeded database may hold, so counts below see only this file's rows.
+-- Triggers are skipped (replica role) so neither the audit log nor the append-only guards see the cleanup; children go first.
+set session_replication_role = replica;
+delete from public.task_events;
+delete from public.acknowledgments;
+delete from public.notice_audiences;
+delete from public.notices;
+delete from public.workflow_rules;
+delete from public.tasks;
+delete from public.task_templates;
+delete from public.outbox_event_handlers;
+delete from public.outbox_events;
+delete from public.notification_deliveries;
+delete from public.notifications;
+delete from public.message_recipients;
+delete from public.messages;
+set session_replication_role = origin;
+
 
 -- BEGIN SHARED FIXTURE: byte-identical in every fixture-using test file (check: see supabase/tests/database/000_catalog_guards.test.sql header notes).
 --   org A: locations A1, A2;  org B: location B1.
@@ -214,7 +233,7 @@ insert into public.notification_deliveries (organization_id, notification_id, pe
 select pg_temp.id(v.org), pg_temp.id('notif_' || v.k), pg_temp.id(v.person), 'in_app', 'sent', now()
 from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
 insert into public.push_subscriptions (organization_id, person_id, endpoint, p256dh, auth_secret)
-select pg_temp.id(v.org), pg_temp.id(v.person), 'https://push.example.test/' || v.k, 'BPfixturefixturefixturefixture' || v.k, 'fixtureauth' || v.k
+select pg_temp.id(v.org), pg_temp.id(v.person), 'https://fcm.googleapis.com/fcm/send/' || v.k, 'BPfixturefixturefixturefixture' || v.k, 'fixtureauth' || v.k
 from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
 insert into public.notification_preferences (organization_id, person_id, channel, enabled)
 select pg_temp.id(v.org), pg_temp.id(v.person), 'email', false from (values ('org_a', 'p_staff_a1'), ('org_b', 'p_staff_b1')) v (org, person);
@@ -415,6 +434,18 @@ insert into public.outbox_events (id, organization_id, location_id, type, entity
 values (pg_temp.id('ev_book'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'booking.confirmed', 'bookings', pg_temp.id('booking_1'), pg_temp.id('ev_book'), '{"x":"1"}');
 insert into public.notification_deliveries (id, organization_id, notification_id, person_id, channel, status)
 values (pg_temp.id('del_a_email'), pg_temp.id('org_a'), pg_temp.id('notif_a'), pg_temp.id('p_staff_a1'), 'email', 'pending');
+-- 000600 fixtures: a live notice, events about a task and a notice, an overdue event, a pending push delivery
+insert into public.notices (id, organization_id, location_id, title, body) values (pg_temp.id('notice_live_a'), pg_temp.id('org_a'), null, 'Live A', 'x');
+insert into public.notice_audiences (organization_id, notice_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('notice_live_a'), null);
+update public.notices set status = 'published', publish_at = now() - interval '1 hour', published_at = now() - interval '1 hour' where id = pg_temp.id('notice_live_a');
+insert into public.outbox_events (id, organization_id, location_id, type, entity_table, entity_id, correlation_id, payload) values
+  (pg_temp.id('ev_tk'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'task.created', 'tasks', pg_temp.id('task_a'), pg_temp.id('ev_tk'), '{}'),
+  (pg_temp.id('ev_nt'), pg_temp.id('org_a'), null, 'notice.published', 'notices', pg_temp.id('notice_live_a'), pg_temp.id('ev_nt'), '{}'),
+  (pg_temp.id('ev_od'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'task.overdue', 'tasks', pg_temp.id('task_a'), pg_temp.id('ev_od'), '{}'),
+  (pg_temp.id('ev_ms'), pg_temp.id('org_a'), null, 'message.sent', 'messages', pg_temp.id('msg_a'), pg_temp.id('ev_ms'), jsonb_build_object('message_id', pg_temp.id('msg_a')));
+insert into public.push_subscriptions (organization_id, person_id, endpoint, p256dh, auth_secret) values (pg_temp.id('org_a'), pg_temp.id('p_staff_a1'), 'https://fcm.googleapis.com/fcm/send/extra', 'BPextraextraextraextra1', 'extraauth1');
+insert into public.notification_deliveries (id, organization_id, notification_id, person_id, channel, status)
+values (pg_temp.id('del_a_push'), pg_temp.id('org_a'), pg_temp.id('notif_a'), pg_temp.id('p_staff_a1'), 'push', 'pending');
 create temp table svc_calls (n int, fn text, expr text, is_set boolean);
 grant all on svc_calls to public;
 insert into svc_calls values
@@ -427,13 +458,25 @@ insert into svc_calls values
   (7,  'create_task_from_event',         $$public.create_task_from_event(pg_temp.id('ev_book'), pg_temp.id('rule_a'))$$, false),
   (8,  'emit_overdue_task_events',       $$public.emit_overdue_task_events(10)$$, false),
   (9,  'create_notification',            $$public.create_notification(pg_temp.id('ev_book'), pg_temp.id('p_staff_a1'), 'booking.confirmed', 'Hello')$$, false),
-  (10, 'notice_audience_person_ids',     $$(select count(*) from public.notice_audience_person_ids(pg_temp.id('notice_a')))$$, true),
+  (10, 'notice_audience_person_ids',     $$(select count(*) from public.notice_audience_person_ids(pg_temp.id('notice_live_a')))$$, true),
   (11, 'task_recipient_person_ids',      $$(select count(*) from public.task_recipient_person_ids(pg_temp.id('task_a')))$$, true),
   (12, 'claim_notification_deliveries',  $$(select count(*) from public.claim_notification_deliveries('w1', 5, 60))$$, true),
   (13, 'complete_notification_delivery', $$public.complete_notification_delivery(pg_temp.id('del_a_email'), 'w1')$$, false),
   (14, 'fail_notification_delivery',     $$public.fail_notification_delivery(pg_temp.id('del_a_email'), 'w1', 'boom')$$, false),
   (15, 'skip_notification_delivery',     $$public.skip_notification_delivery(pg_temp.id('del_a_email'), 'w1', 'nothing to send')$$, false),
-  (16, 'disable_push_subscription',      $$public.disable_push_subscription((select id from public.push_subscriptions limit 1))$$, false);
+  (16, 'disable_push_subscription',      $$public.disable_push_subscription((select id from public.push_subscriptions limit 1))$$, false),
+  (17, 'create_notifications',           $$public.create_notifications(pg_temp.id('ev_book'), array[pg_temp.id('p_staff_a1'), pg_temp.id('p_manager_a1')], 'booking.confirmed', 'Hello all')$$, false),
+  (18, 'worker_task_for_event',          $$(select count(*) from public.worker_task_for_event(pg_temp.id('ev_tk')))$$, true),
+  (19, 'worker_notice_for_event',        $$(select count(*) from public.worker_notice_for_event(pg_temp.id('ev_nt')))$$, true),
+  (20, 'worker_notification_for_delivery', $$(select count(*) from public.worker_notification_for_delivery(pg_temp.id('del_a_email')))$$, true),
+  (21, 'worker_email_for_delivery',      $$public.worker_email_for_delivery(pg_temp.id('del_a_email'))$$, false),
+  (22, 'worker_push_subscriptions_for_delivery', $$(select count(*) from public.worker_push_subscriptions_for_delivery(pg_temp.id('del_a_push')))$$, true),
+  (23, 'release_outbox_event',           $$public.release_outbox_event(pg_temp.id('ev_a'), 'w1')$$, false),
+  (24, 'release_notification_delivery',  $$public.release_notification_delivery(pg_temp.id('del_a_email'), 'w1')$$, false),
+  (25, 'extend_outbox_lock',             $$public.extend_outbox_lock(pg_temp.id('ev_a'), 'w1', 60)$$, false),
+  (26, 'escalate_overdue_task',          $$(select count(*) from public.escalate_overdue_task(pg_temp.id('ev_od')))$$, false),
+  -- 000700
+  (27, 'worker_message_recipients_for_event', $$(select count(*) from public.worker_message_recipients_for_event(pg_temp.id('ev_ms')))$$, true);
 -- every one of them is in the call list (the catalog list minus the two grant-only ones)
 select is((select coalesce(string_agg(p.proname, ', ' order by p.proname), '') from pg_proc p
            where p.pronamespace = 'public'::regnamespace and has_function_privilege('service_role', p.oid, 'execute')

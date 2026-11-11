@@ -5,7 +5,26 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(80);
+select plan(84);
+
+-- Independent of supabase/seed.sql: clear the mock Phase 2 business rows a seeded database may hold, so counts below see only this file's rows.
+-- Triggers are skipped (replica role) so neither the audit log nor the append-only guards see the cleanup; children go first.
+set session_replication_role = replica;
+delete from public.task_events;
+delete from public.acknowledgments;
+delete from public.notice_audiences;
+delete from public.notices;
+delete from public.workflow_rules;
+delete from public.tasks;
+delete from public.task_templates;
+delete from public.outbox_event_handlers;
+delete from public.outbox_events;
+delete from public.notification_deliveries;
+delete from public.notifications;
+delete from public.message_recipients;
+delete from public.messages;
+set session_replication_role = origin;
+
 
 -- BEGIN SHARED FIXTURE: byte-identical in every fixture-using test file (check: see supabase/tests/database/000_catalog_guards.test.sql header notes).
 --   org A: locations A1, A2;  org B: location B1.
@@ -193,18 +212,18 @@ insert into redact_expect values
   ('task_templates', 'instructions'), ('tasks', 'instructions'), ('task_events', 'body'),
   ('notices', 'body'), ('messages', 'body'),
   ('notifications', 'title'), ('notifications', 'body'), ('notifications', 'link_path'),
+  -- 000600 R8: free-text titles and names
+  ('tasks', 'title'), ('notices', 'title'), ('task_templates', 'title'), ('workflow_rules', 'name'),
   ('notification_deliveries', 'last_error'), ('notification_deliveries', 'provider_message_id'),
   ('push_subscriptions', 'endpoint'), ('push_subscriptions', 'p256dh'), ('push_subscriptions', 'auth_secret'), ('push_subscriptions', 'user_agent');
 -- columns of the audited Phase 2 tables that hold short structural text and may appear in the log, each with its reason
 create temp table text_ok (tbl text, col text, why text);
 insert into text_ok values
-  ('notices', 'title', 'a headline, visible in the log by design (the body is redacted)'),
   ('notices', 'status', 'enum'), ('notices', 'urgency', 'enum'),
-  ('tasks', 'title', 'a headline, visible in the log by design (the instructions are redacted)'),
   ('tasks', 'status', 'enum'), ('tasks', 'priority', 'enum'),
-  ('task_templates', 'title', 'a headline, visible in the log by design'), ('task_templates', 'assign_to', 'enum'), ('task_templates', 'default_priority', 'enum'),
+  ('task_templates', 'assign_to', 'enum'), ('task_templates', 'default_priority', 'enum'),
   ('task_events', 'kind', 'enum'), ('task_events', 'from_status', 'enum'), ('task_events', 'to_status', 'enum'),
-  ('workflow_rules', 'name', 'a configuration label'), ('workflow_rules', 'event_type', 'an event type'), ('workflow_rules', 'condition', 'rule configuration (field/op/value), not user content'),
+  ('workflow_rules', 'event_type', 'an event type'), ('workflow_rules', 'condition', 'rule configuration (field/op/value), not user content'),
   ('outbox_events', 'type', 'an event type'), ('outbox_events', 'entity_table', 'a table name'), ('outbox_events', 'status', 'enum'),
   ('outbox_events', 'locked_by', 'a worker name'), ('outbox_events', 'payload', 'a flat object of ids and flags (enforced by validate_event_payload and its CHECK)'),
   ('outbox_event_handlers', 'handler', 'a handler name'),
@@ -243,7 +262,7 @@ select is((select count(*) from text_ok o where not exists (select 1 from inform
 insert into public.job_titles (id, organization_id, name) values (pg_temp.id('jt_x'), pg_temp.id('org_a'), 'Zamboni driver') on conflict do nothing;
 -- notices (as an org admin, the RLS path): body at insert, then edited, then deleted; one published notice with its text
 select pg_temp.act_as('u_orgadmin_a');
-select is(pg_temp.try_msg($$insert into public.notices (id, organization_id, location_id, title, body) values (pg_temp.id('n1'), pg_temp.id('org_a'), null, 'AUD-VISIBLE-NOTICE-TITLE', 'AUD-NOTICE-BODY-ONE')$$), 'ok', 'insert a notice with a literal body');
+select is(pg_temp.try_msg($$insert into public.notices (id, organization_id, location_id, title, body) values (pg_temp.id('n1'), pg_temp.id('org_a'), null, 'AUD-NOTICE-TITLE', 'AUD-NOTICE-BODY-ONE')$$), 'ok', 'insert a notice with a literal body');
 select is(pg_temp.try_msg($$update public.notices set body = 'AUD-NOTICE-BODY-TWO' where id = pg_temp.id('n1')$$), 'ok', 'edit the body');
 select is(pg_temp.try_msg($$insert into public.notices (id, organization_id, location_id, title, body) values (pg_temp.id('n2'), pg_temp.id('org_a'), null, 'second', 'AUD-NOTICE-BODY-THREE')$$), 'ok', 'a second notice');
 select is(pg_temp.try_msg($$delete from public.notices where id = pg_temp.id('n2')$$), 'ok', 'delete it (the old row goes to the log)');
@@ -259,18 +278,20 @@ insert into public.messages (id, organization_id, sender_person_id, body) values
 delete from public.messages where id = pg_temp.id('m_own');
 -- tasks: instructions at insert, a comment, a completion note, a template
 select pg_temp.act_as('u_manager_a1');
-select is(pg_temp.try_msg($$select public.create_task(pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'AUD-VISIBLE-TASK-TITLE', 'AUD-TASK-INSTRUCTIONS', null, 'normal', null, pg_temp.id('p_manager_a1'))$$), 'ok', 'create a task with literal instructions');
-select is(pg_temp.try_msg($$select public.add_task_comment((select id from public.tasks where title = 'AUD-VISIBLE-TASK-TITLE'), 'AUD-COMMENT-BODY')$$), 'ok', 'add a comment with a literal body');
-select is(pg_temp.try_msg($$select public.complete_task((select id from public.tasks where title = 'AUD-VISIBLE-TASK-TITLE'), 'AUD-COMPLETION-NOTE')$$), 'ok', 'complete it with a literal note');
-select is(pg_temp.try_msg($$insert into public.task_templates (id, organization_id, location_id, title, instructions) values (pg_temp.id('tpl1'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'AUD-VISIBLE-TEMPLATE-TITLE', 'AUD-TEMPLATE-INSTRUCTIONS-ONE')$$), 'ok', 'a template with literal instructions');
+select is(pg_temp.try_msg($$select public.create_task(pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'AUD-TASK-TITLE', 'AUD-TASK-INSTRUCTIONS', null, 'normal', null, pg_temp.id('p_manager_a1'))$$), 'ok', 'create a task with literal instructions');
+select is(pg_temp.try_msg($$select public.add_task_comment((select id from public.tasks where title = 'AUD-TASK-TITLE'), 'AUD-COMMENT-BODY')$$), 'ok', 'add a comment with a literal body');
+select is(pg_temp.try_msg($$select public.complete_task((select id from public.tasks where title = 'AUD-TASK-TITLE'), 'AUD-COMPLETION-NOTE')$$), 'ok', 'complete it with a literal note');
+select is(pg_temp.try_msg($$insert into public.task_templates (id, organization_id, location_id, title, instructions) values (pg_temp.id('tpl1'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'AUD-TEMPLATE-TITLE', 'AUD-TEMPLATE-INSTRUCTIONS-ONE')$$), 'ok', 'a template with literal instructions');
 select is(pg_temp.try_msg($$update public.task_templates set instructions = 'AUD-TEMPLATE-INSTRUCTIONS-TWO' where id = pg_temp.id('tpl1')$$), 'ok', 'edit them');
 select pg_temp.act_as('postgres');
+insert into public.workflow_rules (id, organization_id, location_id, name, event_type, task_template_id) values (pg_temp.id('rule1'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'AUD-RULE-NAME', 'booking.confirmed', pg_temp.id('tpl1'));
+update public.workflow_rules set name = 'AUD-RULE-NAME-TWO' where id = pg_temp.id('rule1');
 select is((select count(*) from public.task_events where body like 'AUD-%'), 2::bigint, 'sanity: the comment and the completion note are stored in task_events (so the redaction is what hides them)');
 -- worker: events, notifications, deliveries
 select pg_temp.act_as('postgres');
 insert into evs values ('e1', private.emit_event(pg_temp.id('org_a'), null, 'task.created', 'tasks', gen_random_uuid(), '{}'));
 insert into public.push_subscriptions (id, organization_id, person_id, endpoint, p256dh, auth_secret) values
-  (pg_temp.id('ps0'), pg_temp.id('org_a'), pg_temp.id('p_staff_a2'), 'https://push.example.test/AUDSENTINELENDPOINT0', 'AUDSENTINELP256DHKEY0000', 'AUDSENTINELAUTH0');
+  (pg_temp.id('ps0'), pg_temp.id('org_a'), pg_temp.id('p_staff_a2'), 'https://fcm.googleapis.com/fcm/send/AUDSENTINELENDPOINT0', 'AUDSENTINELP256DHKEY0000', 'AUDSENTINELAUTH0');
 select pg_temp.act_as('service_role');
 select is(public.create_notification((select id from evs where name = 'e1'), pg_temp.id('p_staff_a2'), 'task.assigned', 'AUD-NOTIF-TITLE', 'AUD-NOTIF-BODY', '/aud-notif-link-path') is not null, true, 'the worker creates a notification with a literal title, body and link');
 select pg_temp.act_as('postgres');
@@ -282,9 +303,9 @@ select is(public.complete_notification_delivery((select id from cl where channel
 select pg_temp.act_as('postgres');
 -- push subscription through the API: endpoint, keys, user agent; then refreshed (update) and deleted
 select pg_temp.act_as('u_staff_a1');
-select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/AUDSENTINELENDPOINT1', 'AUDSENTINELP256DHKEY0001', 'AUDSENTINELAUTH1', 'AUDSENTINELUA1')$$), 'ok', 'save a device with literal endpoint, keys and user agent');
-select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/AUDSENTINELENDPOINT1', 'AUDSENTINELP256DHKEY0002', 'AUDSENTINELAUTH2', 'AUDSENTINELUA2')$$), 'ok', 'refresh it with new keys (an update)');
-select is(public.delete_push_subscription(pg_temp.id('org_a'), 'https://push.example.test/AUDSENTINELENDPOINT1'), true, 'delete it (the old row goes to the log)');
+select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/AUDSENTINELENDPOINT1', 'AUDSENTINELP256DHKEY0001', 'AUDSENTINELAUTH1', 'AUDSENTINELUA1')$$), 'ok', 'save a device with literal endpoint, keys and user agent');
+select is(pg_temp.try_msg($$select public.save_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/AUDSENTINELENDPOINT1', 'AUDSENTINELP256DHKEY0002', 'AUDSENTINELAUTH2', 'AUDSENTINELUA2')$$), 'ok', 'refresh it with new keys (an update)');
+select is(public.delete_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/AUDSENTINELENDPOINT1'), true, 'delete it (the old row goes to the log)');
 select pg_temp.act_as('postgres');
 -- the outbox: a failure with a literal error
 select pg_temp.act_as('service_role');
@@ -298,7 +319,7 @@ select pg_temp.act_as('postgres');
 -- 3. The log has the rows, with the literals gone
 -- ===========================================================================
 select ok((select count(*) from public.audit_log where table_name = t and action = 'insert') > 0, 'the log recorded inserts on ' || t)
-  from unnest(array['notices', 'notice_audiences', 'messages', 'message_recipients', 'tasks', 'task_events', 'task_templates', 'notifications', 'notification_deliveries', 'push_subscriptions', 'outbox_events']) t;
+  from unnest(array['notices', 'notice_audiences', 'messages', 'message_recipients', 'tasks', 'task_events', 'task_templates', 'notifications', 'push_subscriptions']) t;
 select is((select count(*) from public.audit_log where table_name = 'notices' and action = 'update' and 'body' = any (changed_columns)), 1::bigint, 'a notice body edit is logged as a change to "body" (the column name is visible, the value is not)');
 select is((select count(*) from public.audit_log where table_name = 'notices' and action = 'delete'), 1::bigint, 'and the deleted notice''s old row is logged');
 select is((select count(*) from public.audit_log where table_name = 'messages' and action = 'delete'), 1::bigint, 'and the deleted message''s old row');
@@ -316,11 +337,14 @@ select is(pg_temp.leaks(l), 0::bigint, 'the literal "' || l || '" appears nowher
     'AUD-DELIVERY-ERROR', 'AUD-PROVIDER-ID-123',
     'AUDSENTINELENDPOINT0', 'AUDSENTINELENDPOINT1', 'AUDSENTINELP256DHKEY0000', 'AUDSENTINELP256DHKEY0001', 'AUDSENTINELP256DHKEY0002',
     'AUDSENTINELAUTH0', 'AUDSENTINELAUTH1', 'AUDSENTINELAUTH2', 'AUDSENTINELUA1', 'AUDSENTINELUA2',
-    'AUD-OUTBOX-ERROR', 'private words']) l;
--- the detector works: headlines are logged on purpose
-select ok(pg_temp.leaks('AUD-VISIBLE-NOTICE-TITLE') > 0, 'twin: the notice title IS in the log (not redacted by design), so the check above would have found a leak');
-select ok(pg_temp.leaks('AUD-VISIBLE-TASK-TITLE') > 0, 'twin: so is the task title');
-select ok(pg_temp.leaks('AUD-VISIBLE-TEMPLATE-TITLE') > 0, 'twin: and the template title');
+    'AUD-OUTBOX-ERROR', 'private words',
+    'AUD-NOTICE-TITLE', 'AUD-TASK-TITLE', 'AUD-TEMPLATE-TITLE', 'AUD-RULE-NAME', 'AUD-RULE-NAME-TWO']) l;
+-- the detector works: an unredacted column (a person's name, Phase 1) IS found
+insert into public.people (id, organization_id, first_name, last_name) values (pg_temp.id('p_ctl'), pg_temp.id('org_a'), 'AUD-VISIBLE-PERSON', 'Control');
+select ok(pg_temp.leaks('AUD-VISIBLE-PERSON') > 0, 'twin: a column that is not redacted (people.first_name) IS found in the log, so the checks above would have found a leak');
+select cmp_ok((select count(*) from public.audit_log where table_name = 'tasks' and new_row ->> 'title' = '[redacted]'), '>', 0::bigint, 'a logged task title reads "[redacted]"');
+select is((select count(*) from public.audit_log where table_name = 'notices' and action = 'insert' and organization_id in (pg_temp.id('org_a'), pg_temp.id('org_b')) and new_row ->> 'title' = '[redacted]'), 2::bigint, 'and so does a logged notice title (both notices)');
+select ok(exists (select 1 from public.audit_log where table_name = 'workflow_rules' and changed_columns = array['name']), 'a rule rename is logged as a change to "name" (no value)');
 -- the outbox error really was stored (so it was the redaction that hid it)
 select is((select count(*) from public.outbox_events where last_error like 'AUD-OUTBOX-ERROR%'), 1::bigint, 'sanity: the outbox error is stored on the event itself');
 select is((select count(*) from public.notification_deliveries where last_error like 'AUD-DELIVERY-ERROR%'), 1::bigint, 'sanity: the delivery error is stored on the delivery');
