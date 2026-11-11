@@ -25,10 +25,10 @@ Organization → Location → Space (a resource) → optional sub-space (a lane,
 | resources | `space_kinds`, `spaces`, `space_hours`, `space_closures` |
 | scheduling | `bookings`, `booking_series`, `booking_task_templates` |
 | staffing | `positions`, `qualifications`, `person_qualifications`, `shifts`, `availability`, `shift_swaps`, `coverage_rules` |
-| workflows | `outbox_events`, `workflow_rules`, `tasks`, `task_events` |
+| workflows | `outbox_events`, `outbox_event_handlers`, `task_templates`, `workflow_rules`, `tasks`, `task_events` |
 | checklists | `checklist_templates`, `checklist_template_items`, `checklist_runs`, `checklist_responses` |
 | incidents | `incident_forms`, `incidents`, `incident_parties`, `incident_sensitive_details`, `incident_history`, `incident_reviews` |
-| communications | `messages`, `message_recipients`, `notices`, `acknowledgments`, `shift_handoffs` |
+| communications | `messages`, `message_recipients`, `notices`, `notice_audiences`, `acknowledgments`, `shift_handoffs` (not built yet), `notifications`, `notification_deliveries`, `push_subscriptions`, `notification_preferences` |
 | audit | `audit_log` |
 
 Key constraints:
@@ -85,3 +85,43 @@ select private.enable_audit('public.incident_sensitive_details', 'id', array['in
 ```
 
 Every table that may hold injury or medical details must list those columns in `p_redact`. UPDATE, DELETE and TRUNCATE on `audit_log` raise for every role, owner included. Only the trigger function inserts (`service_role` has SELECT only). `enable_audit` also installs a `zz_audit_no_truncate` statement trigger, so TRUNCATE on any audited table raises (it would bypass row triggers).
+
+## Phase 2 schema (built)
+
+Migrations: `20261112000100_auth_hardening` (admin tier needs `aal2`, `consume_rate_limit`, `can_manage_person_account`), `..000200_outbox_and_jobs`, `..000300_tasks_and_workflows`, `..000400_communications`, `..000500_notifications`. Access rules and RPC contracts are in `docs/SECURITY.md`. Every table below follows the conventions above (composite FKs, immutable `id`/`organization_id`/`location_id`, server timestamps, RLS, explicit grants, `zz_audit`).
+
+| Table | Scope | Notes that differ from the obvious |
+| --- | --- | --- |
+| `outbox_events` | org, optional location | Written only by `private.emit_event`. `type` like `task.completed` (dotted snake case), `schema_version`, `entity_table` + `entity_id`, `payload` (flat object of ids/scalars, <= 32 keys, <= 8 kB; CHECK), `correlation_id` (defaults to the event's own id; follow-on events carry the source's). `status` pending / processing / done / dead; `attempts`, `next_attempt_at`, `locked_at`, `locked_by`, `lock_expires_at` (processing iff locked), `last_error` (<= 2000), `processed_at` (iff done), `retried_at`, `retried_by_person_id`. The descriptive columns are immutable for every role. |
+| `outbox_event_handlers` | org | PK `(event_id, handler)`, `completed_at`. The per-handler ledger: a retried event skips handlers listed here. FK to the event with cascade. |
+| `rate_limit_counters`, `rate_limit_secret` | schema `private` | Not tenant data: `(bucket, key_hash bytea, window_start)` PK, `window_end`, `hits`. Keys are HMAC'd, never stored. No API role has any privilege. |
+| `task_templates` | org or location (`location_id` null = every location) | `due_offset_minutes` (-525600..525600, from the event's `anchor_at` payload field or the event time; negative = before), `assign_to` none / job_title / person / on_shift (Phase 3 placeholder: unassigned for now), with `assign_job_title_id` / `assign_person_id` required exactly when chosen. `archived_at`. |
+| `workflow_rules` | org or location | `event_type` must be in `private.workflow_trigger_types()` (pilot event list; no `task.*` except `task.overdue`, so rules cannot loop). `condition` jsonb: `{}` or `{"all":[{"field","op":"eq"|"in","value"}]}`, 1-10 clauses, scalars only (CHECK `private.validate_workflow_condition`). Always inserted with `enabled = false` (trigger). An archived rule cannot be enabled; a location template only serves rules of the same location. |
+| `tasks` | location | `space_id` (FK pinned to the location), `status` open / in_progress / done / cancelled (`completed_at` iff done, `cancelled_at` iff cancelled), `priority` low / normal / high / urgent, `due_at`, `assigned_person_id` and/or `assigned_job_title_id`, `created_by_person_id` (null = system), `completed_by_person_id`. `source_event_id` + `source_rule_id` + `task_template_id`: **`unique (source_event_id, task_template_id)`**, so one event makes at most one task per template. `source_event_id` is an idempotency key without an FK (outbox rows are purged after retention, tasks are kept). `overdue_emitted_for` = the `due_at` for which `task.overdue` was emitted. No tenant writes. |
+| `task_events` | location | Append-only history (`created`, `assigned`, `started`, `completed`, `reopened`, `cancelled`, `commented`, `escalated`): `actor_person_id` (null = system), `from_status` / `to_status`, new assignee for `created`/`assigned`, `body` (<= 2000: comment, note, reason), `source_event_id`. UPDATE raises for every role. FK `(task_id, organization_id, location_id)`. |
+| `notices` | org (`location_id` = home scope, null = organization) | `title`, `body` (<= 5000), `urgency` normal / high / critical, `requires_acknowledgment`, `publish_at`, `expires_at` (> `publish_at`), `status` draft / published / archived, `author_person_id` (trigger), `published_at`, `published_by_person_id`, `archived_at`. Inserted as a draft only; edited only while draft. |
+| `notice_audiences` | org | `(location_id or null = whole org) x (job_title_id or null = everyone)`, `unique nulls not distinct (notice_id, location_id, job_title_id)`. A location notice targets only its own location. |
+| `acknowledgments` | org | `unique (notice_id, person_id)`, `acknowledged_at` server time. Written once by `acknowledge_notice`; UPDATE raises for every role. |
+| `messages` | org | `sender_person_id`, `body` (<= 4000, immutable). Written only by `send_message`. |
+| `message_recipients` | org | `unique (message_id, person_id)`, `read_at`. |
+| `notifications` | org, per person | `kind`, `title`, `body` (<= 500 summary), `link_path` (app-relative, `/...`), `source_table`, `source_id`, `source_event_id` (not null, no FK), `urgency`, `read_at`. **`unique (source_event_id, person_id, kind)`**. Everything except `read_at` is immutable. |
+| `notification_deliveries` | org, per person | `channel` in_app / email / push, `status` pending / sent / failed / skipped, `attempts`, `next_attempt_at`, lock columns (a claim keeps status pending with `locked_by` set), `provider_message_id`, `last_error`, `sent_at` (iff sent). **`unique (notification_id, channel)`**. |
+| `push_subscriptions` | org, per person | `endpoint` (https), `p256dh`, `auth_secret`, `user_agent`, `last_used_at`, `disabled_at`. `unique (person_id, endpoint)`. Endpoint and keys are never granted to `authenticated`. |
+| `notification_preferences` | org, per person | `channel` email / push, `enabled`. `unique (person_id, channel)`. In-app cannot be turned off; critical ignores the setting. |
+
+FKs into org-or-location parents (`tasks` -> `task_templates`, `tasks` -> `workflow_rules`, `workflow_rules` -> `task_templates`, `notice_audiences` -> `notices`) are `(id, organization_id)` only: the parent's null `location_id` means "every location", so pairing `location_id` would be wrong. Location compatibility is enforced by the `workflow_rules` trigger, `match_workflow_rules`, and the `notice_audiences` policy.
+
+Audit redactions (value becomes `"[redacted]"`): `outbox_events.last_error`, `task_templates.instructions`, `tasks.instructions`, `task_events.body`, `notices.body`, `messages.body`, `notifications.title/body/link_path`, `notification_deliveries.last_error/provider_message_id`, `push_subscriptions.endpoint/p256dh/auth_secret/user_agent`. Nothing here is Restricted or Sensitive yet; the redactions keep free text out of the audit log and keep it from becoming a way to read private messages.
+
+### Outbox event types emitted (schema_version 1)
+
+| Type | Emitted by | location_id | Payload |
+| --- | --- | --- | --- |
+| `task.created`, `task.started`, `task.completed`, `task.reopened`, `task.assigned`, `task.cancelled`, `task.commented` | the task RPCs and `create_task_from_event` | the task's | `task_id, task_event_id, location_id, status, priority, assigned_person_id, assigned_job_title_id, actor_person_id (null = system), due_at` |
+| `task.overdue` | `emit_overdue_task_events` | the task's | `task_id, location_id, due_at, priority, space_id, assigned_person_id, assigned_job_title_id` |
+| `notice.published` | `publish_notice` (available to workers at `publish_at`) | the notice's home | `notice_id, location_id, urgency, requires_acknowledgment, publish_at, expires_at` |
+| `notice.archived` | `archive_notice` | the notice's home | `notice_id, location_id` |
+| `notice.acknowledged` | `acknowledge_notice` (first time only) | the notice's home | `notice_id, person_id` |
+| `message.sent` | `send_message` | null | `message_id, sender_person_id, recipient_person_ids` |
+
+Producers of `booking.*`, `shift.*`, `checklist.*` and `incident.*` come with their domains. A producer that wants a task anchored to a time puts `anchor_at` (ISO timestamp) and, optionally, `space_id` in its payload.
