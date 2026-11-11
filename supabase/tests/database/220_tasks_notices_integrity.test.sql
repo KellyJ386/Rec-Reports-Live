@@ -22,6 +22,18 @@ delete from public.notification_deliveries;
 delete from public.notifications;
 delete from public.message_recipients;
 delete from public.messages;
+delete from public.shift_claims;
+delete from public.shift_swaps;
+delete from public.shifts;
+delete from public.shift_template_items;
+delete from public.shift_templates;
+delete from public.schedules;
+delete from public.availability;
+delete from public.time_off_requests;
+delete from public.person_qualifications;
+delete from public.position_qualifications;
+delete from public.positions;
+delete from public.qualifications;
 set session_replication_role = origin;
 
 

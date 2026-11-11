@@ -23,6 +23,18 @@ delete from public.notification_deliveries;
 delete from public.notifications;
 delete from public.message_recipients;
 delete from public.messages;
+delete from public.shift_claims;
+delete from public.shift_swaps;
+delete from public.shifts;
+delete from public.shift_template_items;
+delete from public.shift_templates;
+delete from public.schedules;
+delete from public.availability;
+delete from public.time_off_requests;
+delete from public.person_qualifications;
+delete from public.position_qualifications;
+delete from public.positions;
+delete from public.qualifications;
 set session_replication_role = origin;
 
 
@@ -282,9 +294,11 @@ grant execute on function pg_temp.hits(text), pg_temp.new_window(text) to public
 
 -- the table of limits itself
 select results_eq($$select action, max_hits, window_seconds from private.write_limits() order by action$$,
-  $$values ('message_send'::text, 30, 600), ('notice_critical', 5, 86400), ('notice_publish', 20, 3600), ('push_save', 10, 3600),
-           ('task_comment', 60, 600), ('task_create', 60, 600), ('task_transition', 120, 600)$$,
-  'the write limits are exactly: task_create 60/10 min, task_comment 60/10 min, task_transition 120/10 min, message_send 30/10 min, notice_publish 20/h, notice_critical 5/day, push_save 10/h');
+  $$values ('availability_edit'::text, 60, 600), ('message_send', 30, 600), ('notice_critical', 5, 86400), ('notice_publish', 20, 3600),
+           ('push_save', 10, 3600), ('schedule_publish', 20, 3600), ('shift_decide', 120, 600), ('shift_edit', 300, 600),
+           ('shift_exchange', 30, 600), ('staffing_config', 120, 600), ('task_comment', 60, 600), ('task_create', 60, 600),
+           ('task_transition', 120, 600), ('time_off_decide', 120, 600), ('time_off_request', 20, 3600)$$,
+  'the write limits are exactly: task_create 60/10 min, task_comment 60/10 min, task_transition 120/10 min, message_send 30/10 min, notice_publish 20/h, notice_critical 5/day, push_save 10/h, and the eight staffing limits (staffing_config 120/10 min, shift_edit 300/10 min, schedule_publish 20/h, shift_exchange 30/10 min, shift_decide 120/10 min, availability_edit 60/10 min, time_off_request 20/h, time_off_decide 120/10 min)');
 select pg_temp.act_as('u_manager_a1');
 select is(pg_temp.try('select private.write_limits()'), '42501', 'the limits table is not readable by users');
 select is(pg_temp.try($$select private.enforce_write_limit('task_create')$$), '42501', 'nor can a user call the limiter directly');

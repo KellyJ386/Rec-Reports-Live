@@ -5,7 +5,7 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(293);
+select plan(310);
 
 -- Independent of supabase/seed.sql: clear the mock Phase 2 business rows a seeded database may hold, so counts below see only this file's rows.
 -- Triggers are skipped (replica role) so neither the audit log nor the append-only guards see the cleanup; children go first.
@@ -23,6 +23,18 @@ delete from public.notification_deliveries;
 delete from public.notifications;
 delete from public.message_recipients;
 delete from public.messages;
+delete from public.shift_claims;
+delete from public.shift_swaps;
+delete from public.shifts;
+delete from public.shift_template_items;
+delete from public.shift_templates;
+delete from public.schedules;
+delete from public.availability;
+delete from public.time_off_requests;
+delete from public.person_qualifications;
+delete from public.position_qualifications;
+delete from public.positions;
+delete from public.qualifications;
 set session_replication_role = origin;
 
 
@@ -240,6 +252,53 @@ select pg_temp.id(v.org), pg_temp.id(v.person), 'email', false from (values ('or
 
 -- END PHASE 2 ROWS
 
+-- BEGIN PHASE 3 ROWS: byte-identical in every file that uses it (020, 050, 090, 100).
+-- Phase 3 rows: one row in each of the 12 staffing tables, in both organizations, written with the
+-- owner's rights (the API roles cannot write these tables; every write is an RPC). Far-future fixed week
+-- (Monday 2030-01-07). Org A at A1: staff A1 holds a published shift and asked to drop it, and asked for the
+-- open shift; org B at B1: the same for staff B1.
+insert into public.qualifications (id, organization_id, name)
+select pg_temp.id('q_' || v.k), pg_temp.id(v.org), 'Qualification ' || v.k from (values ('a', 'org_a'), ('b', 'org_b')) v (k, org);
+insert into public.positions (id, organization_id, location_id, name)
+select pg_temp.id('pos_' || v.k), pg_temp.id(v.org), pg_temp.id(v.loc), 'Position ' || v.k
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.position_qualifications (organization_id, position_id, qualification_id)
+select pg_temp.id(v.org), pg_temp.id('pos_' || v.k), pg_temp.id('q_' || v.k) from (values ('a', 'org_a'), ('b', 'org_b')) v (k, org);
+insert into public.person_qualifications (organization_id, person_id, qualification_id, valid_from, expires_on)
+select pg_temp.id(v.org), pg_temp.id(v.person), pg_temp.id('q_' || v.k), date '2029-01-01', date '2031-01-01'
+from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
+insert into public.schedules (id, organization_id, location_id, week_start, status, published_at)
+select pg_temp.id('sched_' || v.k), pg_temp.id(v.org), pg_temp.id(v.loc), date '2030-01-07', 'published', now()
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.shifts (id, organization_id, location_id, schedule_id, position_id, starts_at, ends_at, assigned_person_id)
+select pg_temp.id('shift_' || v.k || v.n), pg_temp.id(v.org), pg_temp.id(v.loc), pg_temp.id('sched_' || v.k), pg_temp.id('pos_' || v.k),
+       v.s::timestamptz, v.e::timestamptz, case when v.n = '1' then pg_temp.id(v.person) end
+from (values ('a', '1', 'org_a', 'loc_a1', 'p_staff_a1', '2030-01-08 09:00-05', '2030-01-08 17:00-05'),
+             ('a', '2', 'org_a', 'loc_a1', 'p_staff_a1', '2030-01-09 09:00-05', '2030-01-09 17:00-05'),
+             ('b', '1', 'org_b', 'loc_b1', 'p_staff_b1', '2030-01-08 09:00-07', '2030-01-08 17:00-07'),
+             ('b', '2', 'org_b', 'loc_b1', 'p_staff_b1', '2030-01-09 09:00-07', '2030-01-09 17:00-07')) v (k, n, org, loc, person, s, e);
+insert into public.shift_templates (id, organization_id, location_id, name)
+select pg_temp.id('stpl_' || v.k), pg_temp.id(v.org), pg_temp.id(v.loc), 'Week ' || v.k
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.shift_template_items (organization_id, location_id, template_id, position_id, day_offset, start_time, duration_minutes)
+select pg_temp.id(v.org), pg_temp.id(v.loc), pg_temp.id('stpl_' || v.k), pg_temp.id('pos_' || v.k), 0, time '09:00', 480
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.availability (organization_id, person_id, day_of_week, start_time, end_time, kind)
+select pg_temp.id(v.org), pg_temp.id(v.person), 1, time '09:00', time '17:00', 'available'
+from (values ('org_a', 'p_staff_a1'), ('org_b', 'p_staff_b1')) v (org, person);
+insert into public.time_off_requests (organization_id, person_id, starts_on, ends_on, reason)
+select pg_temp.id(v.org), pg_temp.id(v.person), date '2030-02-01', date '2030-02-02', 'Reason ' || v.person
+from (values ('org_a', 'p_staff_a1'), ('org_b', 'p_staff_b1')) v (org, person);
+insert into public.shift_swaps (organization_id, location_id, kind, shift_id, from_person_id)
+select pg_temp.id(v.org), pg_temp.id(v.loc), 'drop', pg_temp.id('shift_' || v.k || '1'), pg_temp.id(v.person)
+from (values ('a', 'org_a', 'loc_a1', 'p_staff_a1'), ('b', 'org_b', 'loc_b1', 'p_staff_b1')) v (k, org, loc, person);
+insert into public.shift_claims (organization_id, location_id, shift_id, person_id)
+select pg_temp.id(v.org), pg_temp.id(v.loc), pg_temp.id('shift_' || v.k || '2'), pg_temp.id(v.person)
+from (values ('a', 'org_a', 'loc_a1', 'p_staff_a1'), ('b', 'org_b', 'loc_b1', 'p_staff_b1')) v (k, org, loc, person);
+
+-- END PHASE 3 ROWS
+
+
 create function pg_temp.val(p_expr text) returns text language plpgsql as $$
 declare v text;
 begin
@@ -442,7 +501,8 @@ insert into public.outbox_events (id, organization_id, location_id, type, entity
   (pg_temp.id('ev_tk'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'task.created', 'tasks', pg_temp.id('task_a'), pg_temp.id('ev_tk'), '{}'),
   (pg_temp.id('ev_nt'), pg_temp.id('org_a'), null, 'notice.published', 'notices', pg_temp.id('notice_live_a'), pg_temp.id('ev_nt'), '{}'),
   (pg_temp.id('ev_od'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'task.overdue', 'tasks', pg_temp.id('task_a'), pg_temp.id('ev_od'), '{}'),
-  (pg_temp.id('ev_ms'), pg_temp.id('org_a'), null, 'message.sent', 'messages', pg_temp.id('msg_a'), pg_temp.id('ev_ms'), jsonb_build_object('message_id', pg_temp.id('msg_a')));
+  (pg_temp.id('ev_ms'), pg_temp.id('org_a'), null, 'message.sent', 'messages', pg_temp.id('msg_a'), pg_temp.id('ev_ms'), jsonb_build_object('message_id', pg_temp.id('msg_a'))),
+  (pg_temp.id('ev_sh'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'shift.assigned', 'shifts', pg_temp.id('shift_a1'), pg_temp.id('ev_sh'), jsonb_build_object('shift_id', pg_temp.id('shift_a1'), 'person_id', pg_temp.id('p_staff_a1')));
 insert into public.push_subscriptions (organization_id, person_id, endpoint, p256dh, auth_secret) values (pg_temp.id('org_a'), pg_temp.id('p_staff_a1'), 'https://fcm.googleapis.com/fcm/send/extra', 'BPextraextraextraextra1', 'extraauth1');
 insert into public.notification_deliveries (id, organization_id, notification_id, person_id, channel, status)
 values (pg_temp.id('del_a_push'), pg_temp.id('org_a'), pg_temp.id('notif_a'), pg_temp.id('p_staff_a1'), 'push', 'pending');
@@ -476,7 +536,11 @@ insert into svc_calls values
   (25, 'extend_outbox_lock',             $$public.extend_outbox_lock(pg_temp.id('ev_a'), 'w1', 60)$$, false),
   (26, 'escalate_overdue_task',          $$(select count(*) from public.escalate_overdue_task(pg_temp.id('ev_od')))$$, false),
   -- 000700
-  (27, 'worker_message_recipients_for_event', $$(select count(*) from public.worker_message_recipients_for_event(pg_temp.id('ev_ms')))$$, true);
+  (27, 'worker_message_recipients_for_event', $$(select count(*) from public.worker_message_recipients_for_event(pg_temp.id('ev_ms')))$$, true),
+  -- 20261113000100 (staff scheduling)
+  (28, 'emit_uncovered_shift_events',   $$public.emit_uncovered_shift_events(interval '1 minute', 10)$$, false),
+  (29, 'worker_shift_for_event',        $$(select count(*) from public.worker_shift_for_event(pg_temp.id('ev_sh')))$$, true),
+  (30, 'worker_shift_event_recipients', $$(select count(*) from public.worker_shift_event_recipients(pg_temp.id('ev_sh')))$$, true);
 -- every one of them is in the call list (the catalog list minus the two grant-only ones)
 select is((select coalesce(string_agg(p.proname, ', ' order by p.proname), '') from pg_proc p
            where p.pronamespace = 'public'::regnamespace and has_function_privilege('service_role', p.oid, 'execute')
