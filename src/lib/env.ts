@@ -89,3 +89,46 @@ export const sessionSecretSchema = serverEnvSchema.shape.SESSION_SIGNING_SECRET;
 export function getSessionSecret(): string {
   return sessionSecretSchema.parse(process.env.SESSION_SIGNING_SECRET);
 }
+
+/** Empty strings (an unfilled `KEY=` line) count as unset. */
+const optionalText = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+  z.string().trim().min(1).optional(),
+);
+
+/**
+ * Optional delivery settings for the notification worker. Every one may be missing: the email
+ * channel then skips ("email not configured") and the push channel skips ("push not
+ * configured"); nothing here needs a paid service.
+ *
+ *  - RESEND_API_KEY, EMAIL_FROM: Resend's free tier is enough for the pilot (see
+ *    src/domains/communications/worker/channels/email.ts).
+ *  - NEXT_PUBLIC_VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY: a VAPID key pair for web push (generate
+ *    one with `npx web-push generate-vapid-keys`). The public key is also what the browser
+ *    needs to subscribe, which is why it has the NEXT_PUBLIC_ prefix.
+ *  - VAPID_SUBJECT: `mailto:` or `https:` contact for push services; defaults to SITE_URL when
+ *    that is https.
+ */
+export const deliveryEnvSchema = z.object({
+  RESEND_API_KEY: optionalText,
+  EMAIL_FROM: optionalText,
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY: optionalText,
+  VAPID_PRIVATE_KEY: optionalText,
+  VAPID_SUBJECT: optionalText.refine(
+    (v) => v === undefined || /^(mailto:[^\s@]+@[^\s@]+|https:\/\/[^\s]+)$/.test(v),
+    'VAPID_SUBJECT must be mailto:you@example.com or an https URL',
+  ),
+});
+
+export type DeliveryEnv = z.infer<typeof deliveryEnvSchema>;
+
+/** Optional delivery settings. Server only. Throws only when a value that is set is malformed. */
+export function getDeliveryEnv(): DeliveryEnv {
+  return deliveryEnvSchema.parse({
+    RESEND_API_KEY: process.env.RESEND_API_KEY,
+    EMAIL_FROM: process.env.EMAIL_FROM,
+    NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
+    VAPID_SUBJECT: process.env.VAPID_SUBJECT,
+  });
+}

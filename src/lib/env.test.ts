@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { publicEnvSchema, serverEnvSchema, siteUrlSchema } from './env';
+import { deliveryEnvSchema, publicEnvSchema, serverEnvSchema, siteUrlSchema } from './env';
 
 const valid = {
   SITE_URL: 'https://app.example.com',
@@ -75,5 +75,34 @@ describe('siteUrlSchema', () => {
     const rest: Partial<typeof valid> = { ...valid };
     delete rest.SITE_URL;
     expect(serverEnvSchema.safeParse(rest).success).toBe(false);
+  });
+});
+
+describe('deliveryEnvSchema', () => {
+  it('accepts nothing at all: every delivery setting is optional', () => {
+    expect(deliveryEnvSchema.parse({})).toEqual({});
+  });
+  it('treats empty strings (an unfilled KEY= line) as unset', () => {
+    const parsed = deliveryEnvSchema.parse({
+      RESEND_API_KEY: '',
+      EMAIL_FROM: '  ',
+      VAPID_PRIVATE_KEY: '',
+      VAPID_SUBJECT: '',
+    });
+    expect(parsed.RESEND_API_KEY).toBeUndefined();
+    expect(parsed.EMAIL_FROM).toBeUndefined();
+    expect(parsed.VAPID_SUBJECT).toBeUndefined();
+  });
+  it('accepts mailto: and https: subjects and rejects anything else', () => {
+    expect(deliveryEnvSchema.safeParse({ VAPID_SUBJECT: 'mailto:ops@example.com' }).success).toBe(
+      true,
+    );
+    expect(deliveryEnvSchema.safeParse({ VAPID_SUBJECT: 'https://app.example.com' }).success).toBe(
+      true,
+    );
+    expect(deliveryEnvSchema.safeParse({ VAPID_SUBJECT: 'http://app.example.com' }).success).toBe(
+      false,
+    );
+    expect(deliveryEnvSchema.safeParse({ VAPID_SUBJECT: 'ops@example.com' }).success).toBe(false);
   });
 });

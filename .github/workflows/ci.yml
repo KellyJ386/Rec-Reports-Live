@@ -34,6 +34,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: dummy-service-role-key
           SITE_URL: http://localhost:3000
           SESSION_SIGNING_SECRET: dummy-session-signing-secret-for-ci-only-0000
+          CRON_SECRET: dummy-cron-secret-for-ci-only-0000
 
   database:
     runs-on: ubuntu-latest
