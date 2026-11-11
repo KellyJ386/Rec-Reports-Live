@@ -27,9 +27,7 @@ function seed(db: InMemoryDb, n = 1) {
     people.push(p);
   }
   const e = db.emit('x.y', fakeId());
-  return Promise.all(
-    people.map((p) => db.createNotification({ eventId: e, personId: p, kind: 'k', title: 'T' })),
-  );
+  return db.createNotifications({ eventId: e, personIds: people, kind: 'k', title: 'T' });
 }
 const statusOf = (db: InMemoryDb, ch: string) =>
   [...db.deliveries.values()].filter((d) => d.channel === ch).map((d) => d.status);
@@ -134,8 +132,8 @@ describe('deliverNotifications', () => {
 
   it('skips a delivery whose notification has gone', async () => {
     const db = new InMemoryDb();
-    const [nid] = await seed(db);
-    db.notifications.delete(nid as string);
+    await seed(db);
+    db.notifications.clear();
     const s = await deliverNotifications(
       db.delivery,
       {
@@ -152,9 +150,9 @@ describe('deliverNotifications', () => {
     const p = fakeId();
     db.addMember(p, { email: 'a@example.com', push: true });
     db.turnedOff.add(`${p}:email`);
-    await db.createNotification({
+    await db.createNotifications({
       eventId: db.emit('x.y', fakeId()),
-      personId: p,
+      personIds: [p],
       kind: 'k',
       title: 'T',
     });
@@ -187,5 +185,12 @@ describe('deliverNotifications', () => {
     expect(s.budgetExhausted).toBe(true);
     expect(s.abandoned).toBeGreaterThan(0);
     expect(s.sent + s.abandoned).toBeLessThanOrEqual(s.claimed);
+    // Unstarted claims are given back, with no attempt counted, instead of waiting for a lock.
+    expect(db.calls.deliveryRelease).toBe(s.abandoned);
+    const unsent = [...db.deliveries.values()].filter(
+      (d) => d.channel !== 'in_app' && d.status === 'pending',
+    );
+    expect(unsent.filter((d) => d.lockedBy === null && d.attempts === 0).length).toBeGreaterThan(0);
+    expect(unsent.every((d) => d.lockedBy === null || d.attempts > 0)).toBe(true);
   });
 });

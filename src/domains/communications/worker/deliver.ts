@@ -20,6 +20,7 @@ export interface DeliverSummary {
   /** Failed for good (permanent error, or the last attempt). */
   failed: number;
   lostClaim: number;
+  /** Claimed but not started before the hard budget; given back with release_notification_delivery. */
   abandoned: number;
   budgetExhausted: boolean;
 }
@@ -73,7 +74,15 @@ export async function deliverNotifications(
 
       for (const [index, delivery] of batch.entries()) {
         if (now() - started >= options.hardBudgetMs) {
-          summary.abandoned += batch.length - index;
+          // Give the rest back unsent (no attempt counted) instead of leaving them to a lock expiry.
+          for (const rest of batch.slice(index)) {
+            summary.abandoned += 1;
+            try {
+              await port.release(rest.id, options.workerId);
+            } catch (error) {
+              log({ event: 'delivery.release_failed', id: rest.id, errorClass: errorClass(error) });
+            }
+          }
           summary.budgetExhausted = true;
           return summary;
         }
@@ -94,10 +103,7 @@ async function processDelivery(
 ): Promise<void> {
   let result: SendResult;
   try {
-    const notification = await port.getNotification(
-      delivery.organizationId,
-      delivery.notificationId,
-    );
+    const notification = await port.getNotification(delivery.id);
     result = notification
       ? await channel.send({ delivery, notification })
       : { outcome: 'skipped', reason: 'notification missing' };

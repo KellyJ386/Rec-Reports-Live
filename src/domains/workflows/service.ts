@@ -113,6 +113,8 @@ export type FailedJob = {
   created_at: string;
   next_attempt_at: string;
   retried_at: string | null;
+  /** How many times a person has retried it by hand (the database allows MAX_MANUAL_RETRIES). */
+  manual_retries: number;
   errorClass: string;
 };
 
@@ -489,7 +491,11 @@ export async function setWorkflowRuleArchived(
 
 // ---- failed jobs ----
 
-/** Jobs that gave up (dead) or failed and will try again. Newest change first. */
+/**
+ * Jobs that gave up (dead) or failed and will try again. Newest change first. Message jobs
+ * (`message.*`) are never listed: the database hides them from every tenant, platform admins
+ * included, because who wrote to whom is private.
+ */
 export async function listFailedJobs(
   orgId: string,
   page: number,
@@ -499,7 +505,7 @@ export async function listFailedJobs(
     supabase
       .from('outbox_events')
       .select(
-        'id, type, location_id, status, attempts, created_at, next_attempt_at, retried_at, last_error',
+        'id, type, location_id, status, attempts, created_at, next_attempt_at, retried_at, manual_retries, last_error',
         { count: 'exact' },
       )
       .eq('organization_id', orgId)
@@ -520,6 +526,7 @@ export async function listFailedJobs(
       created_at: r.created_at,
       next_attempt_at: r.next_attempt_at,
       retried_at: r.retried_at,
+      manual_retries: r.manual_retries,
       errorClass: errorClass(r.last_error),
     })),
   });

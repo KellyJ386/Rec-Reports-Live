@@ -1,4 +1,4 @@
-// web-push 4 ships no types. Only what channels/push.ts uses.
+// web-push 4 ships no types. Only what web-push-sender.ts uses.
 declare module 'web-push' {
   export interface PushSubscriptionLike {
     endpoint: string;
@@ -10,9 +10,17 @@ declare module 'web-push' {
     urgency?: 'very-low' | 'low' | 'normal' | 'high';
     timeout?: number;
   }
-  export function sendNotification(
+  export interface RequestDetails {
+    endpoint: string;
+    method: string;
+    headers: Record<string, string>;
+    body: Buffer;
+    timeout?: number;
+  }
+  /** Builds the encrypted, signed request without sending it. Throws on a bad subscription or key. */
+  export function generateRequestDetails(
     subscription: PushSubscriptionLike,
     payload: string,
     options?: SendOptions,
-  ): Promise<{ statusCode: number }>;
+  ): RequestDetails;
 }

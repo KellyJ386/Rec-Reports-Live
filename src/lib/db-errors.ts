@@ -7,6 +7,8 @@ export type DbErrorLike = {
   message?: string | null;
   details?: string | null;
   hint?: string | null;
+  /** HTTP status, when the caller has it (PostgREST answers 429 for a rate limit). */
+  status?: number | null;
 };
 
 export type Result<T> = { ok: true; data: T } | { ok: false; message: string };
@@ -29,6 +31,7 @@ export const GRANT_EXCEEDS_ERROR =
 export const NO_ROLES_YET_ERROR =
   'That person has no roles yet. Only an organization admin can give them their first one.';
 
+export const TOO_FAST_ERROR = "You're doing that too fast. Wait a minute and try again.";
 export const GENERIC_ERROR = 'Something went wrong. Try again.';
 export const DENIED_ERROR = 'You are not allowed to do that.';
 export const NO_CHANGE_ERROR =
@@ -109,6 +112,29 @@ const TRIGGER_MESSAGES: ReadonlyArray<readonly [string, string]> = [
   ],
   ['only failed events can be retried', 'Only a failed job can be retried.'],
   ['too many at once', 'Too many at once. Try fewer.'],
+  // Review fixes (20261112000600). The rate limit is matched before the codes below.
+  ['slow down', TOO_FAST_ERROR],
+  ['invalid due time', 'That due time is not valid. Pick a real date and time.'],
+  ['invalid publish time', 'That publish time is not valid. Pick a real date and time.'],
+  ['this push service is not supported', "This device's push service is not supported."],
+  [
+    'event chain is too deep',
+    'That rule would trigger too many tasks in a row, so it was stopped.',
+  ],
+  ['finite_', 'That date or time is not valid. Pick a real one.'],
+  [
+    'rules can be on for one kind of event',
+    'There are already 20 rules turned on for that event. Turn one off first.',
+  ],
+  [
+    'a rule for overdue tasks needs a template',
+    'A rule for overdue tasks needs a task template that is due at least 1 minute later.',
+  ],
+  [
+    'a rule for overdue tasks uses this template',
+    'A rule for overdue tasks uses this template, so it must be due at least 1 minute later.',
+  ],
+  ['retried too many times', 'That job was already retried 3 times. Ask support for help.'],
 ];
 
 export function mapDbError(
@@ -122,6 +148,8 @@ export function mapDbError(
   for (const [fragment, text] of TRIGGER_MESSAGES) {
     if (message.includes(fragment)) return text;
   }
+  if (code === 'PT429' || code === '429' || error.status === 429) return TOO_FAST_ERROR;
+  if (code === '54000') return 'That is over the limit. Remove something and try again.';
   if (code === '42501' || message.includes('row-level security')) return DENIED_ERROR;
   switch (code) {
     case '23505':

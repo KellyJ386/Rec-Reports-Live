@@ -239,6 +239,25 @@ export async function canManagePersonAccount(orgId: string, personId: string): P
 }
 
 /**
+ * Whether the caller may send this person's invite again (can_resend_person_invite), asked of
+ * the database through the caller's own session. True only for a login that was never confirmed
+ * and never used, and only for someone who outranks the person; always false at aal1 for an admin
+ * who has MFA. False on any error.
+ */
+export async function canResendPersonInvite(orgId: string, personId: string): Promise<boolean> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc('can_resend_person_invite', {
+    p_organization_id: orgId,
+    p_person_id: personId,
+  });
+  if (error) {
+    console.error('identity: can_resend_person_invite failed', error.code ?? '');
+    return false;
+  }
+  return data === true;
+}
+
+/**
  * Turns a person's login off or on (accounts.disabled_at). Through the caller's session, so
  * RLS enforces the tier rule; a refusal shows up as zero rows changed.
  */

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { EventHandler, HandlerRegistry, OutboxEvent } from '@/lib/cron/outbox-types';
-import { InMemoryDb } from '@/lib/cron/testing/in-memory-db';
+import type {
+  EventHandler,
+  HandlerContext,
+  HandlerRegistry,
+  OutboxEvent,
+} from '@/lib/cron/outbox-types';
+import { InMemoryDb, NO_DEADLINE } from '@/lib/cron/testing/in-memory-db';
 import { drainOutbox, type DrainOptions } from './drain';
 
 const quiet = () => undefined;
@@ -18,13 +23,16 @@ function options(db: InMemoryDb, extra: Partial<DrainOptions> = {}): DrainOption
   };
 }
 
-function handler(name: string, run: (e: OutboxEvent) => Promise<void> = async () => undefined) {
+function handler(
+  name: string,
+  run: (e: OutboxEvent, ctx: HandlerContext) => Promise<void> = async () => undefined,
+) {
   const calls: string[] = [];
   const h: EventHandler = {
     name,
-    async run(e) {
+    async run(e, ctx) {
       calls.push(e.id);
-      await run(e);
+      await run(e, ctx);
     },
   };
   return { h, calls };
@@ -91,7 +99,7 @@ describe('drainOutbox', () => {
     const id = db.emit('t.x', 'e1');
     // Worker 1 claimed, ran "a", recorded it, and died before "b".
     await db.claim('dead-worker', 5, 120);
-    await a.h.run({ ...(db.events.get(id) as OutboxEvent) });
+    await a.h.run({ ...(db.events.get(id) as OutboxEvent) }, NO_DEADLINE);
     await db.recordHandler(id, 'a');
     // Not reclaimable until the lock expires.
     expect((await drainOutbox(db, registryOf('t.x', a.h, b.h), options(db))).claimed).toBe(0);
@@ -160,7 +168,7 @@ describe('drainOutbox', () => {
     expect([...db.events.values()].filter((e) => e.status === 'pending')).toHaveLength(4);
   });
 
-  it('leaves claimed events it has no time to start for their lock, never half-run', async () => {
+  it('gives back claimed events it has no time to start, never half-run', async () => {
     const db = new InMemoryDb();
     const slow = handler('slow', async () => {
       db.clock += 600;
@@ -173,10 +181,79 @@ describe('drainOutbox', () => {
     );
     expect(s).toMatchObject({ claimed: 4, completed: 2, abandoned: 2, budgetExhausted: true });
     expect(slow.calls).toHaveLength(2);
-    // The abandoned ones are reclaimed after their lock expires, and then finish.
-    db.clock += 121_000;
+    // They were released (no lock wait, no attempt used), so the next run takes them at once.
+    expect(db.calls.release).toBe(2);
+    expect(
+      [...db.events.values()].filter((e) => e.status === 'pending' && e.attempts === 0),
+    ).toHaveLength(2);
     const again = await drainOutbox(db, registryOf('t.x', slow.h), options(db));
     expect(again.completed).toBe(2);
+  });
+
+  it('a handler that hits the deadline inside its loop is released, not failed, and resumes next run', async () => {
+    const db = new InMemoryDb();
+    const done: number[] = [];
+    // A fan-out of 5 chunks; each chunk costs 400 ms. The hard budget (1000 ms) runs out mid-way.
+    const fanOut = handler('fan', async (_e, ctx) => {
+      for (let chunk = 0; chunk < 5; chunk += 1) {
+        if (done.includes(chunk)) continue; // idempotent: already made on an earlier run
+        await ctx.checkpoint();
+        done.push(chunk);
+        db.clock += 400;
+      }
+    });
+    const id = db.emit('t.x', 'e1');
+    const first = await drainOutbox(
+      db,
+      registryOf('t.x', fanOut.h),
+      options(db, { softBudgetMs: 1000, hardBudgetMs: 1000 }),
+    );
+    expect(first).toMatchObject({
+      completed: 0,
+      failed: 0,
+      dead: 0,
+      abandoned: 1,
+      budgetExhausted: true,
+    });
+    expect(done).toEqual([0, 1, 2]);
+    expect(db.events.get(id)).toMatchObject({ status: 'pending', attempts: 0 });
+    const second = await drainOutbox(db, registryOf('t.x', fanOut.h), options(db));
+    expect(second.completed).toBe(1);
+    expect(done).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it('extends the lock of a long fan-out, and stops quietly when the claim is gone', async () => {
+    const db = new InMemoryDb();
+    const long = handler('long', async (_e, ctx) => {
+      for (let i = 0; i < 4; i += 1) {
+        await ctx.checkpoint();
+        db.clock += 40_000; // a quarter of a 120 s lock is 30 s
+      }
+    });
+    const id = db.emit('t.x', 'e1');
+    const s = await drainOutbox(
+      db,
+      registryOf('t.x', long.h),
+      options(db, { softBudgetMs: 1_000_000, hardBudgetMs: 1_000_000 }),
+    );
+    expect(s.completed).toBe(1);
+    expect(db.calls.extendLock).toBeGreaterThanOrEqual(2);
+    expect(db.events.get(id)?.status).toBe('done');
+
+    const db2 = new InMemoryDb();
+    const stolen = handler('stolen', async (e, ctx) => {
+      const ev = db2.events.get(e.id);
+      if (ev) ev.lockedBy = 'someone-else';
+      db2.clock += 40_000;
+      await ctx.checkpoint();
+    });
+    db2.emit('t.x', 'e1');
+    const s2 = await drainOutbox(
+      db2,
+      registryOf('t.x', stolen.h),
+      options(db2, { softBudgetMs: 1_000_000, hardBudgetMs: 1_000_000 }),
+    );
+    expect(s2).toMatchObject({ lostClaim: 1, completed: 0, failed: 0 });
   });
 
   it('counts a lost claim instead of throwing', async () => {

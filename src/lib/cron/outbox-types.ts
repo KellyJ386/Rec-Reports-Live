@@ -30,6 +30,20 @@ export interface OutboxPort {
   handlersDone(eventId: string): Promise<string[]>;
   /** True when newly recorded. */
   recordHandler(eventId: string, handler: string): Promise<boolean>;
+  /** Gives a claimed event back unprocessed (the attempt is not counted). False: the claim was lost. */
+  release(eventId: string, worker: string): Promise<boolean>;
+  /** Pushes the lock of a claimed event out by `seconds`. False: the claim was lost. */
+  extendLock(eventId: string, worker: string, seconds: number): Promise<boolean>;
+}
+
+/**
+ * What the drain loop gives a handler. A handler with a loop (a fan-out to many people) calls
+ * `checkpoint()` before each chunk: it throws `DeadlineReached` when the run is out of time (the
+ * event is then released, and the next run finishes it: handlers are idempotent) and extends the
+ * event's lock now and then so a long fan-out is not reclaimed while it works.
+ */
+export interface HandlerContext {
+  checkpoint(): Promise<void>;
 }
 
 /**
@@ -40,7 +54,7 @@ export interface OutboxPort {
 export interface EventHandler {
   /** Ledger key: lowercase letters, digits and `_ . : -`, at most 100 characters. */
   readonly name: string;
-  run(event: OutboxEvent): Promise<void>;
+  run(event: OutboxEvent, ctx: HandlerContext): Promise<void>;
 }
 
 /** Event type -> handlers, in the order they run. */

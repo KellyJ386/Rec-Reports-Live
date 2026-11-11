@@ -20,7 +20,9 @@ import {
   MAX_CLAUSES,
   conditionFromForm,
   createWorkflowRule,
+  getTaskTemplate,
   getWorkflowRule,
+  overdueRuleTemplateProblem,
   setWorkflowRuleArchived,
   setWorkflowRuleEnabled,
   updateWorkflowRule,
@@ -69,6 +71,14 @@ export async function createWorkflowRuleAction(
     task_template_id: templateId,
   });
   if (!parsed.success) return zodProblem(formData, parsed.error);
+  const template = await getTaskTemplate(orgId, templateId);
+  if (template.ok && template.data) {
+    const problem = overdueRuleTemplateProblem(
+      parsed.data.event_type,
+      template.data.due_offset_minutes,
+    );
+    if (problem) return bad(formData, problem);
+  }
   const result = await createWorkflowRule(parsed.data);
   if (!result.ok) return bad(formData, result.message);
   refresh();
@@ -104,6 +114,14 @@ export async function updateWorkflowRuleAction(
     ...(condition && condition.ok ? { condition: condition.condition } : {}),
   });
   if (!parsed.success) return zodProblem(formData, parsed.error);
+  // The event type may be unchanged (not in the form data of every caller): use the stored one.
+  const stored = await getWorkflowRule(orgId, id);
+  const eventType = parsed.data.event_type ?? (stored.ok ? stored.data?.event_type : undefined);
+  const template = await getTaskTemplate(orgId, templateId);
+  if (template.ok && template.data) {
+    const problem = overdueRuleTemplateProblem(eventType, template.data.due_offset_minutes);
+    if (problem) return bad(formData, problem);
+  }
   const result = await updateWorkflowRule(orgId, id, parsed.data);
   if (result.ok) refresh(id);
   return fromResult(formData, result, 'Saved.');

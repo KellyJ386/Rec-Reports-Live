@@ -5,6 +5,7 @@ import {
   GRANT_EXCEEDS_ERROR,
   NO_CHANGE_ERROR,
   NO_ROLES_YET_ERROR,
+  TOO_FAST_ERROR,
   mapDbError,
   requireChanged,
 } from './db-errors';
@@ -150,5 +151,59 @@ describe('mapDbError: security review refusals', () => {
     expect(mapDbError({ code: '42501', message: 'permission denied for table people' })).toBe(
       DENIED_ERROR,
     );
+  });
+});
+
+describe('mapDbError: review fixes (migration 000600)', () => {
+  it('maps the rate limit however it arrives, to one sentence', () => {
+    const text = "You're doing that too fast. Wait a minute and try again.";
+    expect(TOO_FAST_ERROR).toBe(text);
+    expect(mapDbError({ code: 'PT429', message: 'slow down' })).toBe(text);
+    expect(mapDbError({ code: '429', message: 'x' })).toBe(text);
+    expect(mapDbError({ status: 429, message: 'anything' })).toBe(text);
+    expect(mapDbError({ message: 'Slow down' })).toBe(text);
+  });
+
+  it('maps the new 22023 messages to short plain text', () => {
+    expect(mapDbError({ code: '22023', message: 'invalid due time' })).toBe(
+      'That due time is not valid. Pick a real date and time.',
+    );
+    expect(mapDbError({ code: '22023', message: 'invalid publish time' })).toBe(
+      'That publish time is not valid. Pick a real date and time.',
+    );
+    expect(
+      mapDbError({ code: '22023', message: 'the notice would expire before it is shown' }),
+    ).toBe('The notice would expire before it is shown. Pick a later expiry.');
+    expect(mapDbError({ code: '22023', message: 'this push service is not supported' })).toBe(
+      "This device's push service is not supported.",
+    );
+    expect(
+      mapDbError({
+        code: '22023',
+        message: 'this job has been retried too many times; ask support',
+      }),
+    ).toBe('That job was already retried 3 times. Ask support for help.');
+  });
+
+  it('maps the rule caps and the chain limit (54000, 23514)', () => {
+    expect(mapDbError({ code: '54000', message: 'event chain is too deep' })).toMatch(
+      /too many tasks/,
+    );
+    expect(mapDbError({ code: '54000', message: 'something else' })).toMatch(/over the limit/);
+    expect(
+      mapDbError({ code: '23514', message: 'at most 20 rules can be on for one kind of event' }),
+    ).toBe('There are already 20 rules turned on for that event. Turn one off first.');
+    expect(
+      mapDbError({
+        code: '23514',
+        message: 'a rule for overdue tasks needs a template that is due at least 1 minute later',
+      }),
+    ).toMatch(/at least 1 minute/);
+    expect(
+      mapDbError({
+        code: '23514',
+        message: 'new row for relation "tasks" violates check constraint "finite_due_at"',
+      }),
+    ).toBe('That date or time is not valid. Pick a real one.');
   });
 });

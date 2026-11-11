@@ -6,6 +6,7 @@ import {
   noticeUpdateSchema,
   notificationPreferenceSaveSchema,
   notificationPreferenceUpdateSchema,
+  isAllowedPushEndpoint,
   pushSubscriptionSaveSchema,
 } from './schemas';
 
@@ -188,31 +189,85 @@ describe('messageSendSchema', () => {
 describe('pushSubscriptionSaveSchema', () => {
   const valid = {
     organization_id: ORG,
-    endpoint: 'https://push.example.com/send/abc123',
+    endpoint: 'https://fcm.googleapis.com/fcm/send/abc123',
     p256dh:
       'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM',
     auth_secret: 'tBHItJI5svbpez7KI4CCXg',
     user_agent: 'Mobile Safari',
   };
 
-  it('accepts a subscription from an https endpoint', () => {
+  it('accepts a subscription from a known push service', () => {
     expect(ok(pushSubscriptionSaveSchema, valid)).toBe(true);
     expect(ok(pushSubscriptionSaveSchema, { ...valid, user_agent: undefined })).toBe(true);
   });
 
   it('rejects a non-https or spaced endpoint', () => {
     expect(
-      ok(pushSubscriptionSaveSchema, { ...valid, endpoint: 'http://push.example.com/x' }),
+      ok(pushSubscriptionSaveSchema, { ...valid, endpoint: 'http://fcm.googleapis.com/x' }),
     ).toBe(false);
     expect(
-      ok(pushSubscriptionSaveSchema, { ...valid, endpoint: 'https://push.example.com/a b' }),
+      ok(pushSubscriptionSaveSchema, { ...valid, endpoint: 'https://fcm.googleapis.com/a b' }),
     ).toBe(false);
     expect(
       ok(pushSubscriptionSaveSchema, {
         ...valid,
-        endpoint: `https://e.example.com/${'a'.repeat(2000)}`,
+        endpoint: `https://fcm.googleapis.com/${'a'.repeat(2000)}`,
       }),
     ).toBe(false);
+  });
+
+  it('accepts every allowlisted service, with or without port 443', () => {
+    for (const endpoint of [
+      'https://fcm.googleapis.com/fcm/send/abc',
+      'https://FCM.googleapis.com/fcm/send/abc',
+      'https://fcm.googleapis.com:443/fcm/send/abc',
+      'https://updates.push.services.mozilla.com/wpush/v2/abc',
+      'https://web.push.apple.com/QAbc',
+      'https://api.development.push.apple.com/3/device/abc',
+      'https://db5p.notify.windows.com/?token=abc',
+      'https://a.b.notify.windows.com/w/?token=abc',
+    ]) {
+      expect(ok(pushSubscriptionSaveSchema, { ...valid, endpoint }), endpoint).toBe(true);
+    }
+  });
+
+  it('rejects look-alike hosts, userinfo, other ports and unknown services', () => {
+    for (const endpoint of [
+      'https://push.example.com/send/abc123',
+      'https://push.example.test/x',
+      'https://fcm.googleapis.com.evil.example/x',
+      'https://evilfcm.googleapis.com/x',
+      'https://fcm-googleapis.com/x',
+      'https://fcm.googleapis.com@evil.example/x',
+      'https://evil.example@fcm.googleapis.com/x',
+      'https://user:pw@fcm.googleapis.com/x',
+      'https://evil.example/fcm.googleapis.com/x',
+      'https://evil.example/?h=fcm.googleapis.com',
+      'https://evil.example#@fcm.googleapis.com/x',
+      'https://fcm.googleapis.com:8443/x',
+      'https://fcm.googleapis.com:80/x',
+      'https://fcm.googleapis.com:/x',
+      'https://fcm.googleapis.com',
+      'https://fcm.googleapis.com?x=1',
+      'https://push.apple.com/x',
+      'https://evilpush.apple.com/x',
+      'https://web.push.apple.com.evil.example/x',
+      'https://notify.windows.com/x',
+      'https://x.notify.windows.com.evil.example/x',
+      'https://x.xnotify.windows.com/x',
+      'https://updates.push.services.mozilla.com.evil.example/x',
+      'https://localhost/x',
+      'https://127.0.0.1/x',
+      'https://[::1]/x',
+      'ftp://fcm.googleapis.com/x',
+      'HTTPS://fcm.googleapis.com/x',
+      ' https://fcm.googleapis.com/x',
+      'https://fcm.googleapis.com/x\n',
+      '//fcm.googleapis.com/x',
+      '',
+    ]) {
+      expect(ok(pushSubscriptionSaveSchema, { ...valid, endpoint }), endpoint).toBe(false);
+    }
   });
 
   it('rejects keys that do not match the stored format', () => {
@@ -241,5 +296,14 @@ describe('notification preference schemas', () => {
   it('update changes only enabled', () => {
     expect(ok(notificationPreferenceUpdateSchema, { enabled: true })).toBe(true);
     expect(ok(notificationPreferenceUpdateSchema, { enabled: true, channel: 'push' })).toBe(false);
+  });
+});
+
+describe('isAllowedPushEndpoint', () => {
+  it('is the same rule as private.push_endpoint_allowed', () => {
+    expect(isAllowedPushEndpoint('https://fcm.googleapis.com/x')).toBe(true);
+    expect(isAllowedPushEndpoint('https://fcm.googleapis.com.evil.example/x')).toBe(false);
+    expect(isAllowedPushEndpoint(`https://fcm.googleapis.com/${'a'.repeat(1973)}`)).toBe(true);
+    expect(isAllowedPushEndpoint(`https://fcm.googleapis.com/${'a'.repeat(1975)}`)).toBe(false);
   });
 });

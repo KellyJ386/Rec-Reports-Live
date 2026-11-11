@@ -122,12 +122,31 @@ export function parsePushEndpoint(value: unknown): string | null {
   return text.length <= 2000 && ENDPOINT.test(text) ? text : null;
 }
 
+// The same rule as private.push_endpoint_allowed (migration 20261112000600): https, no userinfo,
+// port 443 or none, a path, and one of the known push services. The host part of the pattern
+// excludes `/ ? # @ :` and spaces, so userinfo, other ports and look-alike hosts such as
+// fcm.googleapis.com.evil.example or evil.example/fcm.googleapis.com cannot match.
+const ENDPOINT_SHAPE = /^https:\/\/[^/?#@:\s]+(:443)?\/\S*$/;
+const ENDPOINT_HOST = /^https:\/\/([^/?#@:\s]+)/;
+const PUSH_HOSTS = new Set(['fcm.googleapis.com', 'updates.push.services.mozilla.com']);
+const APPLE_HOST = /^([a-z0-9-]+\.)+push\.apple\.com$/;
+const WINDOWS_HOST = /^([a-z0-9-]+\.)+notify\.windows\.com$/;
+
+export function isAllowedPushEndpoint(value: string): boolean {
+  if (value.length > 2000 || !ENDPOINT_SHAPE.test(value)) return false;
+  const host = ENDPOINT_HOST.exec(value)?.[1]?.toLowerCase();
+  if (!host) return false;
+  return PUSH_HOSTS.has(host) || APPLE_HOST.test(host) || WINDOWS_HOST.test(host);
+}
+
+export const PUSH_NOT_SUPPORTED_MESSAGE = 'This push service is not supported.';
+
 export const pushSubscriptionSaveSchema = z.strictObject({
   organization_id: z.uuid(),
   endpoint: z
     .string()
     .max(2000, 'The push endpoint is too long')
-    .regex(ENDPOINT, 'The push endpoint must be an https address'),
+    .refine(isAllowedPushEndpoint, PUSH_NOT_SUPPORTED_MESSAGE),
   p256dh: z.string().regex(P256DH, 'The push key is not valid'),
   auth_secret: z.string().regex(AUTH_SECRET, 'The push secret is not valid'),
   // The RPC keeps the first 300 characters; a longer value is refused here instead.

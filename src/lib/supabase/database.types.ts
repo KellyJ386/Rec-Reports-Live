@@ -836,6 +836,9 @@ export type Database = {
           retried_by_person_id: string | null
           created_at: string
           updated_at: string
+          causation_id: string | null
+          causation_depth: number
+          manual_retries: number
         }
         Insert: {
           id?: string
@@ -859,6 +862,9 @@ export type Database = {
           retried_by_person_id?: string | null
           created_at?: string
           updated_at?: string
+          causation_id?: string | null
+          causation_depth?: number
+          manual_retries?: number
         }
         Update: {
           id?: string
@@ -882,6 +888,9 @@ export type Database = {
           retried_by_person_id?: string | null
           created_at?: string
           updated_at?: string
+          causation_id?: string | null
+          causation_depth?: number
+          manual_retries?: number
         }
         Relationships: [
           {
@@ -1678,6 +1687,7 @@ export type Database = {
           overdue_emitted_for: string | null
           created_at: string
           updated_at: string
+          escalated_for: string | null
         }
         Insert: {
           id?: string
@@ -1701,6 +1711,7 @@ export type Database = {
           overdue_emitted_for?: string | null
           created_at?: string
           updated_at?: string
+          escalated_for?: string | null
         }
         Update: {
           id?: string
@@ -1724,6 +1735,7 @@ export type Database = {
           overdue_emitted_for?: string | null
           created_at?: string
           updated_at?: string
+          escalated_for?: string | null
         }
         Relationships: [
           {
@@ -2120,6 +2132,58 @@ export type Database = {
       }
       delete_push_subscription: {
         Args: { p_organization_id: string; p_endpoint: string }
+        Returns: boolean
+      }
+      release_outbox_event: {
+        Args: { p_id: string; p_worker: string }
+        Returns: boolean
+      }
+      extend_outbox_lock: {
+        Args: { p_id: string; p_worker: string; p_seconds: number }
+        Returns: boolean
+      }
+      release_notification_delivery: {
+        Args: { p_id: string; p_worker: string }
+        Returns: boolean
+      }
+      escalate_overdue_task: {
+        Args: { p_event_id: string }
+        Returns: string[]
+      }
+      notice_acknowledgment_status: {
+        Args: { p_notice_id: string }
+        Returns: { person_id: string; acknowledged_at: string | null }[]
+      }
+      my_notices: {
+        Args: { p_organization_id?: string | null; p_limit?: number }
+        Returns: { notice_id: string; organization_id: string; location_id: string | null; title: string; body: string; urgency: string; requires_acknowledgment: boolean; publish_at: string | null; expires_at: string | null; acknowledged_at: string | null }[]
+      }
+      create_notifications: {
+        Args: { p_event_id: string; p_person_ids: string[]; p_kind: string; p_title: string; p_summary?: string | null; p_link?: string | null; p_urgency?: string | null }
+        Returns: number
+      }
+      worker_task_for_event: {
+        Args: { p_event_id: string }
+        Returns: { task_id: string; organization_id: string; location_id: string; location_name: string; title: string; status: string; priority: string; due_at: string | null; assigned_person_id: string | null; assigned_job_title_id: string | null }[]
+      }
+      worker_notice_for_event: {
+        Args: { p_event_id: string }
+        Returns: { notice_id: string; organization_id: string; location_id: string | null; title: string; status: string; urgency: string; requires_acknowledgment: boolean; publish_at: string | null; expires_at: string | null }[]
+      }
+      worker_notification_for_delivery: {
+        Args: { p_delivery_id: string }
+        Returns: { delivery_id: string; notification_id: string; organization_id: string; person_id: string; channel: string; status: string; attempts: number; kind: string; title: string; body: string | null; link_path: string | null; urgency: string }[]
+      }
+      worker_email_for_delivery: {
+        Args: { p_delivery_id: string }
+        Returns: string | null
+      }
+      worker_push_subscriptions_for_delivery: {
+        Args: { p_delivery_id: string }
+        Returns: { subscription_id: string; endpoint: string; p256dh: string; auth_secret: string }[]
+      }
+      can_resend_person_invite: {
+        Args: { p_organization_id: string; p_person_id: string }
         Returns: boolean
       }
     }

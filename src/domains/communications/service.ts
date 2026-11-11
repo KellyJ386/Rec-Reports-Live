@@ -36,7 +36,8 @@ export type NoticeAudienceRow = Pick<
   Tables<'notice_audiences'>,
   'id' | 'location_id' | 'job_title_id'
 >;
-export type AcknowledgmentRow = Pick<Tables<'acknowledgments'>, 'person_id' | 'acknowledged_at'>;
+/** One person of a notice's audience; `acknowledged_at` is null until they confirm. */
+export type AcknowledgmentRow = { person_id: string; acknowledged_at: string | null };
 
 export type InboxRow = {
   message_id: string;
@@ -67,44 +68,52 @@ export type NotificationRow = Pick<
 // ---- notices: reading as a member of the audience ----
 
 /**
- * Notices that are published, past their publish time and not expired. RLS shows a member only
- * the ones they are an audience of; a manager also sees the ones they manage.
+ * A live notice addressed to the caller, as `my_notices` returns it: published, past its publish
+ * time, not expired, and in the caller's audience, with the caller's own acknowledgment time.
+ * `id` is the notice id (named like the other notice rows so the same helpers work on it).
  */
-export async function listLiveNotices(orgId: string): Promise<Result<NoticeSummary[]>> {
+export type MyNotice = {
+  id: string;
+  location_id: string | null;
+  title: string;
+  urgency: string;
+  requires_acknowledgment: boolean;
+  publish_at: string | null;
+  expires_at: string | null;
+  acknowledged_at: string | null;
+};
+
+/** The most notices `my_notices` returns in one call. */
+const MY_NOTICES_LIMIT = 200;
+
+/**
+ * The caller's live notices (the database decides who a notice is for, so a manager does not see
+ * other people's notices here). The body is not needed for a list and is dropped.
+ */
+export async function listMyNotices(orgId: string): Promise<Result<MyNotice[]>> {
   const supabase = await createClient();
-  const nowIso = new Date().toISOString();
-  return fetchAllRows<NoticeSummary>((from, to) =>
-    supabase
-      .from('notices')
-      .select(NOTICE_LIST_COLUMNS)
-      .eq('organization_id', orgId)
-      .eq('status', 'published')
-      .lte('publish_at', nowIso)
-      .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
-      .order('publish_at', { ascending: false })
-      .order('id')
-      .range(from, to),
+  const { data, error } = await supabase.rpc('my_notices', {
+    p_organization_id: orgId,
+    p_limit: MY_NOTICES_LIMIT,
+  });
+  if (error) return failure(error);
+  return ok(
+    (data ?? []).map((n) => ({
+      id: n.notice_id,
+      location_id: n.location_id,
+      title: n.title,
+      urgency: n.urgency,
+      requires_acknowledgment: n.requires_acknowledgment,
+      publish_at: n.publish_at,
+      expires_at: n.expires_at,
+      acknowledged_at: n.acknowledged_at,
+    })),
   );
 }
 
-/** When the person acknowledged each notice (their own rows only). */
-export async function listMyAcknowledgments(
-  orgId: string,
-  personId: string,
-): Promise<Result<Map<string, string>>> {
-  const supabase = await createClient();
-  const rows = await fetchAllRows<{ notice_id: string; acknowledged_at: string }>((from, to) =>
-    supabase
-      .from('acknowledgments')
-      .select('notice_id, acknowledged_at')
-      .eq('organization_id', orgId)
-      .eq('person_id', personId)
-      .order('acknowledged_at', { ascending: false })
-      .order('id')
-      .range(from, to),
-  );
-  if (!rows.ok) return rows;
-  return ok(new Map(rows.data.map((r) => [r.notice_id, r.acknowledged_at])));
+/** The ids of the notices in a list that the caller has acknowledged. */
+export function acknowledgedIds(notices: readonly MyNotice[]): Set<string> {
+  return new Set(notices.filter((n) => n.acknowledged_at !== null).map((n) => n.id));
 }
 
 export async function getNotice(orgId: string, id: string): Promise<Result<Notice | null>> {
@@ -183,25 +192,18 @@ export async function listNoticeAudiences(
 }
 
 /**
- * Who has acknowledged. A manager of the notice reads every row; anyone else only their own.
- * The database does not let a user read who is in the audience, so "who has not yet" cannot
- * be worked out here.
+ * Who the notice is for and who has confirmed (`notice_acknowledgment_status`): one row per
+ * person in the audience or who confirmed, `acknowledged_at` null for those who have not. Only a
+ * communications admin over the notice's home scope may ask; anyone else is refused (42501), and
+ * the database limits the rows to people the caller can see.
  */
-export async function listAcknowledgments(
-  orgId: string,
-  noticeId: string,
-): Promise<Result<AcknowledgmentRow[]>> {
+export async function listAcknowledgments(noticeId: string): Promise<Result<AcknowledgmentRow[]>> {
   const supabase = await createClient();
-  return fetchAllRows<AcknowledgmentRow>((from, to) =>
-    supabase
-      .from('acknowledgments')
-      .select('person_id, acknowledged_at')
-      .eq('organization_id', orgId)
-      .eq('notice_id', noticeId)
-      .order('acknowledged_at')
-      .order('id')
-      .range(from, to),
-  );
+  const { data, error } = await supabase.rpc('notice_acknowledgment_status', {
+    p_notice_id: noticeId,
+  });
+  if (error) return failure(error);
+  return ok(data ?? []);
 }
 
 /**

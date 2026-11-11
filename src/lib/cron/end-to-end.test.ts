@@ -30,6 +30,7 @@ function setup() {
     status: 'published',
     urgency: 'critical',
     requiresAcknowledgment: true,
+    publishAt: null,
     expiresAt: null,
   });
   db.noticeAudience.set(noticeId, people);
@@ -91,10 +92,10 @@ describe('notice.published end to end (in memory)', () => {
   it('a third pass over a finished event does nothing at all', async () => {
     const { db, registry, drain } = setup();
     await drainOutbox(db, registry, drain);
-    const before = db.calls.createNotification;
+    const before = db.calls.createNotifications;
     const again = await drainOutbox(db, registry, drain);
     expect(again.claimed).toBe(0);
-    expect(db.calls.createNotification).toBe(before);
+    expect(db.calls.createNotifications).toBe(before);
   });
 
   it('then delivers each email and push once, with only title, summary and link', async () => {

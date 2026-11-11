@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { OutboxEvent } from '@/lib/cron/outbox-types';
-import { InMemoryDb, fakeId } from '@/lib/cron/testing/in-memory-db';
-import { createMessageNotifyHandler, createNoticeNotifyHandler, noticeLink } from './handlers';
+import { InMemoryDb, NO_DEADLINE, fakeId } from '@/lib/cron/testing/in-memory-db';
+import { DeadlineReached } from '@/lib/cron/error-class';
+import {
+  NOTIFY_CHUNK,
+  createMessageNotifyHandler,
+  createNoticeNotifyHandler,
+  noticeLink,
+} from './handlers';
 
 const asEvent = (db: InMemoryDb, id: string): OutboxEvent => ({
   ...(db.events.get(id) as OutboxEvent),
@@ -15,6 +21,7 @@ function notice(db: InMemoryDb, over: Partial<Parameters<typeof db.notices.set>[
     status: 'published',
     urgency: 'normal',
     requiresAcknowledgment: false,
+    publishAt: null,
     expiresAt: null,
     ...over,
   });
@@ -30,8 +37,8 @@ describe('notice.published handler', () => {
     db.noticeAudience.set(nid, people);
     const id = db.emit('notice.published', nid);
     const h = createNoticeNotifyHandler({ notices: db, notifier: db });
-    await h.run(asEvent(db, id));
-    await h.run(asEvent(db, id));
+    await h.run(asEvent(db, id), NO_DEADLINE);
+    await h.run(asEvent(db, id), NO_DEADLINE);
     const made = [...db.notifications.values()];
     expect(made).toHaveLength(3);
     expect(
@@ -47,7 +54,10 @@ describe('notice.published handler', () => {
     const nid = notice(db, { urgency: 'critical', requiresAcknowledgment: true });
     db.noticeAudience.set(nid, [p]);
     const id = db.emit('notice.published', nid, { urgency: 'normal' });
-    await createNoticeNotifyHandler({ notices: db, notifier: db }).run(asEvent(db, id));
+    await createNoticeNotifyHandler({ notices: db, notifier: db }).run(
+      asEvent(db, id),
+      NO_DEADLINE,
+    );
     const n = [...db.notifications.values()][0];
     expect(n?.urgency).toBe('critical');
     expect(n?.body).toMatch(/Acknowledge/);
@@ -66,12 +76,12 @@ describe('notice.published handler', () => {
     ];
     for (const nid of ids) {
       db.noticeAudience.set(nid, [p]);
-      await h.run(asEvent(db, db.emit('notice.published', nid)));
+      await h.run(asEvent(db, db.emit('notice.published', nid)), NO_DEADLINE);
     }
     expect(db.notifications.size).toBe(0);
   });
 
-  it('skips audience members who are not active (create_notification returns null)', async () => {
+  it('skips audience members who are not active (create_notifications skips them)', async () => {
     const db = new InMemoryDb();
     const active = fakeId();
     db.addMember(active);
@@ -79,6 +89,7 @@ describe('notice.published handler', () => {
     db.noticeAudience.set(nid, [active, fakeId()]);
     await createNoticeNotifyHandler({ notices: db, notifier: db }).run(
       asEvent(db, db.emit('notice.published', nid)),
+      NO_DEADLINE,
     );
     expect(db.notifications.size).toBe(1);
   });
@@ -94,8 +105,8 @@ describe('message.sent handler', () => {
       recipient_person_ids: [a, b, a, sender, 'not-a-uuid', 42],
     });
     const h = createMessageNotifyHandler({ notifier: db });
-    await h.run(asEvent(db, id));
-    await h.run(asEvent(db, id));
+    await h.run(asEvent(db, id), NO_DEADLINE);
+    await h.run(asEvent(db, id), NO_DEADLINE);
     const made = [...db.notifications.values()];
     expect(made.map((n) => n.personId).sort()).toEqual([a, b].sort());
     expect(made.every((n) => n.title === 'New message' && n.body === null)).toBe(true);
@@ -105,7 +116,32 @@ describe('message.sent handler', () => {
     const db = new InMemoryDb();
     await createMessageNotifyHandler({ notifier: db }).run(
       asEvent(db, db.emit('message.sent', fakeId())),
+      NO_DEADLINE,
     );
     expect(db.notifications.size).toBe(0);
+  });
+});
+
+describe('fan-out in chunks', () => {
+  it('stops at the deadline between chunks, and a re-run finishes without doubling anyone', async () => {
+    const db = new InMemoryDb();
+    const people = Array.from({ length: NOTIFY_CHUNK * 3 }, () => fakeId());
+    people.forEach((p) => db.addMember(p));
+    const nid = notice(db);
+    db.noticeAudience.set(nid, people);
+    const id = db.emit('notice.published', nid);
+    const h = createNoticeNotifyHandler({ notices: db, notifier: db });
+    let checkpoints = 0;
+    const stopAfterTwo = {
+      checkpoint: async () => {
+        checkpoints += 1;
+        if (checkpoints > 2) throw new DeadlineReached();
+      },
+    };
+    await expect(h.run(asEvent(db, id), stopAfterTwo)).rejects.toBeInstanceOf(DeadlineReached);
+    expect(db.notifications.size).toBe(NOTIFY_CHUNK * 2);
+    await h.run(asEvent(db, id), NO_DEADLINE);
+    expect(db.notifications.size).toBe(NOTIFY_CHUNK * 3);
+    expect(db.calls.createNotifications).toBe(2 + 3); // one batch call per chunk, never per person
   });
 });

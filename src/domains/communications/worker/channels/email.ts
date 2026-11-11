@@ -22,7 +22,7 @@ export const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 export interface EmailChannelDeps {
   config: EmailConfig;
   siteUrl: string;
-  people: Pick<DeliveryPort, 'getPersonEmail'>;
+  people: Pick<DeliveryPort, 'getEmailForDelivery'>;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 }
@@ -37,7 +37,7 @@ export function createEmailChannel(deps: EmailChannelDeps): DeliveryChannel {
       const { apiKey, from } = deps.config;
       if (!apiKey || !from) return { outcome: 'skipped', reason: 'email not configured' };
 
-      const to = await deps.people.getPersonEmail(delivery.organizationId, delivery.personId);
+      const to = await deps.people.getEmailForDelivery(delivery.id);
       if (!to) return { outcome: 'skipped', reason: 'no email address' };
 
       const message = buildEmail(notification, deps.siteUrl);

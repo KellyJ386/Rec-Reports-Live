@@ -4,9 +4,10 @@
 export type Urgency = 'normal' | 'high' | 'critical';
 export type Channel = 'in_app' | 'email' | 'push';
 
-export interface CreateNotificationInput {
+export interface CreateNotificationsInput {
   eventId: string;
-  personId: string;
+  /** 1 to 10,000 people. Duplicates, unknown people and people of another organization are skipped. */
+  personIds: string[];
   kind: string;
   title: string;
   body?: string | null;
@@ -14,13 +15,14 @@ export interface CreateNotificationInput {
   urgency?: Urgency;
 }
 
-/** create_notification, notice_audience_person_ids and task_recipient_person_ids (migration 000500). */
+/** create_notifications, notice_audience_person_ids and task_recipient_person_ids (migrations 000500, 000600). */
 export interface NotificationPort {
   /**
-   * One notification per (event, person, kind), with its delivery rows. Returns the id (the
-   * existing one on a re-run), or null when the person is not an active member (nothing made).
+   * One notification per (event, person, kind), with its delivery rows, for a whole list of
+   * people in one call. Idempotent: a re-run makes nothing new. Returns how many people have the
+   * notification now (new or existing); people who are not active members are skipped.
    */
-  createNotification(input: CreateNotificationInput): Promise<string | null>;
+  createNotifications(input: CreateNotificationsInput): Promise<number>;
   /** Active members in a notice's audience. */
   noticeAudiencePersonIds(noticeId: string): Promise<string[]>;
   /** The assignee, or the holders of the job title the task is routed to. */
@@ -33,12 +35,13 @@ export interface NoticeSnapshot {
   status: string;
   urgency: Urgency;
   requiresAcknowledgment: boolean;
+  publishAt: string | null;
   expiresAt: string | null;
 }
 
-/** No function returns a notice to a worker, so the adapter selects these columns (never the body). */
+/** worker_notice_for_event: the notice an outbox event is about (never its body). */
 export interface NoticeReader {
-  getNotice(noticeId: string): Promise<NoticeSnapshot | null>;
+  getNoticeForEvent(eventId: string): Promise<NoticeSnapshot | null>;
 }
 
 export interface Delivery {
@@ -86,14 +89,15 @@ export interface DeliveryPort {
     permanent: boolean,
   ): Promise<'pending' | 'failed' | null>;
   skip(deliveryId: string, worker: string, reason: string): Promise<boolean>;
+  /** Gives a claimed delivery back unsent (the attempt is not counted). False: the claim was lost. */
+  release(deliveryId: string, worker: string): Promise<boolean>;
   disablePushSubscription(subscriptionId: string): Promise<boolean>;
-  getNotification(
-    organizationId: string,
-    notificationId: string,
-  ): Promise<NotificationContent | null>;
-  getPersonEmail(organizationId: string, personId: string): Promise<string | null>;
-  /** Active (not disabled) devices of the person. */
-  getPushTargets(organizationId: string, personId: string): Promise<PushTarget[]>;
+  /** worker_notification_for_delivery: what may be sent for this delivery. Null: gone. */
+  getNotification(deliveryId: string): Promise<NotificationContent | null>;
+  /** worker_email_for_delivery: the confirmed login email, or null (unconfirmed, or not an email delivery). */
+  getEmailForDelivery(deliveryId: string): Promise<string | null>;
+  /** worker_push_subscriptions_for_delivery: the person's active devices. */
+  getPushTargets(deliveryId: string): Promise<PushTarget[]>;
 }
 
 export type SendResult =

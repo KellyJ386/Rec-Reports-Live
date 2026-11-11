@@ -33,7 +33,7 @@ describe('in_app channel', () => {
 });
 
 describe('email channel', () => {
-  const people = (email: string | null) => ({ getPersonEmail: vi.fn(async () => email) });
+  const people = (email: string | null) => ({ getEmailForDelivery: vi.fn(async () => email) });
   const make = (
     over: { apiKey?: string; from?: string; email?: string | null; fetchImpl?: typeof fetch } = {},
   ) =>
@@ -254,7 +254,7 @@ describe('push channel', () => {
 describe('createChannels', () => {
   it('builds all three channels', () => {
     const c = createChannels({
-      email: { config: {}, siteUrl: SITE, people: { getPersonEmail: async () => null } },
+      email: { config: {}, siteUrl: SITE, people: { getEmailForDelivery: async () => null } },
       push: {
         vapid: null,
         siteUrl: SITE,

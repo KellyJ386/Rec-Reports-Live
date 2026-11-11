@@ -9,7 +9,12 @@ import {
 import { formatInZone } from '@/lib/time';
 import { parsePage } from '@/lib/paging';
 import { getOrganizationSettings, listAllLocations } from '@/domains/organizations';
-import { jobStateLabel, listFailedJobs } from '@/domains/workflows';
+import {
+  MAX_MANUAL_RETRIES,
+  canRetryJob,
+  jobStateLabel,
+  listFailedJobs,
+} from '@/domains/workflows';
 
 export const metadata = { title: 'Failed jobs | Rec Reports' };
 
@@ -45,8 +50,10 @@ export default async function FailedJobsPage({
       <p>
         Background jobs that did not work: the notices, tasks and messages that were meant to go
         out. A job marked &quot;Failing&quot; will try again by itself. A job that &quot;stopped
-        trying&quot; needs you to retry it. Times are shown in {tz}.
+        trying&quot; needs you to retry it, up to {MAX_MANUAL_RETRIES} times. Times are shown in{' '}
+        {tz}.
       </p>
+      <p>Jobs about private messages are never listed here.</p>
       {!res.ok ? <ErrorMessage message={res.message} /> : null}
       {res.ok && res.data.rows.length === 0 ? <p>Nothing has failed.</p> : null}
       {res.ok && res.data.rows.length > 0 ? (
@@ -83,10 +90,12 @@ export default async function FailedJobsPage({
                     {j.retried_at ? ` Retried ${formatInZone(j.retried_at, tz)}.` : ''}
                   </td>
                   <td>
-                    {j.status === 'dead' && canRetry(j.location_id) ? (
+                    {canRetryJob(j) && canRetry(j.location_id) ? (
                       <ActionForm action={retryJobAction} submitLabel="Retry">
                         <input type="hidden" name="job_id" value={j.id} />
                       </ActionForm>
+                    ) : j.status === 'dead' && !canRetryJob(j) ? (
+                      `Already retried ${MAX_MANUAL_RETRIES} times. Ask support.`
                     ) : j.status === 'pending' ? (
                       'It will try again by itself'
                     ) : (

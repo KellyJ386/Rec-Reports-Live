@@ -15,6 +15,7 @@ import {
   deletePushSubscription,
   markAllNotificationsRead,
   markNotificationsRead,
+  PUSH_NOT_SUPPORTED_MESSAGE,
   pushSubscriptionSaveSchema,
   savePushSubscription,
   setChannelEnabled,
@@ -89,7 +90,15 @@ export async function saveDeviceAction(input: {
     user_agent: typeof input?.userAgent === 'string' ? input.userAgent.slice(0, 300) : null,
   });
   if (!parsed.success) {
-    return { ok: false, message: 'This device could not be set up for notifications.' };
+    const unsupported = parsed.error.issues.some(
+      (i) => i.path[0] === 'endpoint' && i.message === PUSH_NOT_SUPPORTED_MESSAGE,
+    );
+    return {
+      ok: false,
+      message: unsupported
+        ? PUSH_NOT_SUPPORTED_MESSAGE
+        : 'This device could not be set up for notifications.',
+    };
   }
   const result = await savePushSubscription(parsed.data);
   if (!result.ok) return { ok: false, message: result.message };

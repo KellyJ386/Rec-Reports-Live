@@ -14,10 +14,8 @@ import type {
 
 /**
  * Supabase implementations of the communications worker ports. The client must be the
- * service-role client built in src/lib/cron/jobs.ts. The notification, audience and delivery
- * state changes all go through the service_role functions of migration 000500. The reads
- * (`getNotice`, `getNotification`, `getPersonEmail`, `getPushTargets`) are narrow SELECTs,
- * because no function returns that data to a worker; service_role has SELECT on these tables.
+ * service-role client built in src/lib/cron/jobs.ts. Everything goes through the service_role
+ * functions of migrations 000500 and 000600 (`worker_*` for reads); no table is read directly.
  */
 type Client = SupabaseClient<Database>;
 
@@ -27,18 +25,19 @@ function urgencyOf(value: string): Urgency {
 
 export function createNotificationPort(client: Client): NotificationPort {
   return {
-    async createNotification(input) {
-      const { data, error } = await client.rpc('create_notification', {
+    async createNotifications(input) {
+      if (input.personIds.length === 0) return 0;
+      const { data, error } = await client.rpc('create_notifications', {
         p_event_id: input.eventId,
-        p_person_id: input.personId,
+        p_person_ids: input.personIds,
         p_kind: input.kind,
         p_title: input.title,
-        p_body: input.body ?? null,
-        p_link_path: input.linkPath ?? null,
+        p_summary: input.body ?? null,
+        p_link: input.linkPath ?? null,
         p_urgency: input.urgency ?? null,
       });
-      if (error) throw new PortError('create_notification', error.code);
-      return data ?? null;
+      if (error) throw new PortError('create_notifications', error.code);
+      return data ?? 0;
     },
     async noticeAudiencePersonIds(noticeId) {
       const { data, error } = await client.rpc('notice_audience_person_ids', {
@@ -57,21 +56,19 @@ export function createNotificationPort(client: Client): NotificationPort {
 
 export function createNoticeReader(client: Client): NoticeReader {
   return {
-    async getNotice(noticeId) {
-      const { data, error } = await client
-        .from('notices')
-        .select('id, title, status, urgency, requires_acknowledgment, expires_at')
-        .eq('id', noticeId)
-        .maybeSingle();
-      if (error) throw new PortError('read_notice', error.code);
-      if (!data) return null;
+    async getNoticeForEvent(eventId) {
+      const { data, error } = await client.rpc('worker_notice_for_event', { p_event_id: eventId });
+      if (error) throw new PortError('worker_notice_for_event', error.code);
+      const row = data?.[0];
+      if (!row) return null;
       return {
-        id: data.id,
-        title: data.title,
-        status: data.status,
-        urgency: urgencyOf(data.urgency),
-        requiresAcknowledgment: data.requires_acknowledgment,
-        expiresAt: data.expires_at,
+        id: row.notice_id,
+        title: row.title,
+        status: row.status,
+        urgency: urgencyOf(row.urgency),
+        requiresAcknowledgment: row.requires_acknowledgment,
+        publishAt: row.publish_at,
+        expiresAt: row.expires_at,
       };
     },
   };
@@ -131,44 +128,42 @@ export function createDeliveryPort(client: Client): DeliveryPort {
       if (error) throw new PortError('disable_push_subscription', error.code);
       return data === true;
     },
-    async getNotification(organizationId, notificationId): Promise<NotificationContent | null> {
-      const { data, error } = await client
-        .from('notifications')
-        .select('title, body, link_path, urgency')
-        .eq('id', notificationId)
-        .eq('organization_id', organizationId)
-        .maybeSingle();
-      if (error) throw new PortError('read_notification', error.code);
-      if (!data) return null;
+    async release(deliveryId, worker) {
+      const { data, error } = await client.rpc('release_notification_delivery', {
+        p_id: deliveryId,
+        p_worker: worker,
+      });
+      if (error) throw new PortError('release_notification_delivery', error.code);
+      return data === true;
+    },
+    async getNotification(deliveryId): Promise<NotificationContent | null> {
+      const { data, error } = await client.rpc('worker_notification_for_delivery', {
+        p_delivery_id: deliveryId,
+      });
+      if (error) throw new PortError('worker_notification_for_delivery', error.code);
+      const row = data?.[0];
+      if (!row) return null;
       return {
-        title: data.title,
-        body: data.body,
-        linkPath: data.link_path,
-        urgency: urgencyOf(data.urgency),
+        title: row.title,
+        body: row.body,
+        linkPath: row.link_path,
+        urgency: urgencyOf(row.urgency),
       };
     },
-    async getPersonEmail(organizationId, personId) {
-      const { data, error } = await client
-        .from('people')
-        .select('email')
-        .eq('id', personId)
-        .eq('organization_id', organizationId)
-        .maybeSingle();
-      if (error) throw new PortError('read_person_email', error.code);
-      return data?.email ?? null;
+    async getEmailForDelivery(deliveryId) {
+      const { data, error } = await client.rpc('worker_email_for_delivery', {
+        p_delivery_id: deliveryId,
+      });
+      if (error) throw new PortError('worker_email_for_delivery', error.code);
+      return data ?? null;
     },
-    async getPushTargets(organizationId, personId): Promise<PushTarget[]> {
-      const { data, error } = await client
-        .from('push_subscriptions')
-        .select('id, endpoint, p256dh, auth_secret')
-        .eq('person_id', personId)
-        .eq('organization_id', organizationId)
-        .is('disabled_at', null)
-        .order('created_at', { ascending: true })
-        .limit(10);
-      if (error) throw new PortError('read_push_subscriptions', error.code);
+    async getPushTargets(deliveryId): Promise<PushTarget[]> {
+      const { data, error } = await client.rpc('worker_push_subscriptions_for_delivery', {
+        p_delivery_id: deliveryId,
+      });
+      if (error) throw new PortError('worker_push_subscriptions_for_delivery', error.code);
       return (data ?? []).map((row) => ({
-        id: row.id,
+        id: row.subscription_id,
         endpoint: row.endpoint,
         p256dh: row.p256dh,
         authSecret: row.auth_secret,

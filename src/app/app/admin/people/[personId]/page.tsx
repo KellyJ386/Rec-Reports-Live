@@ -14,7 +14,13 @@ import { ConfirmAction } from '@/experiences/admin/confirm-action';
 import { PersonFields } from '@/experiences/admin/fields';
 import { guidParam } from '@/experiences/admin/page-params';
 import { ArchivedMark, ErrorMessage } from '@/experiences/admin/ui';
-import { displayName, getAccountStatus, getPerson, inviteView } from '@/domains/identity';
+import {
+  canResendPersonInvite,
+  displayName,
+  getAccountStatus,
+  getPerson,
+  inviteView,
+} from '@/domains/identity';
 
 const ACCOUNT_TEXT = {
   active: 'Has a login account.',
@@ -27,11 +33,14 @@ function LoginActions({
   email,
   view,
   name,
+  canResend,
 }: {
   personId: string;
   email: string | null;
   view: ReturnType<typeof inviteView>;
   name: string;
+  /** can_resend_person_invite: the login was never confirmed or used, and the caller outranks them. */
+  canResend: boolean;
 }) {
   switch (view) {
     case 'can_invite':
@@ -46,17 +55,12 @@ function LoginActions({
     case 'can_resend':
       return (
         <>
-          {/*
-            TODO(can_resend_person_invite): "Resend invite" is switched off. Show it only when the
-            database says so: public.can_resend_person_invite(p_organization_id uuid,
-            p_person_id uuid) returns boolean (being added in a new migration; not in
-            database.types.ts yet). Add a canResendPersonInvite() service function in
-            src/domains/identity that calls it through the caller's own session, then render the
-            ActionForm below when it is true:
-              <ActionForm action={sendInviteAction} submitLabel="Resend invite"> ...
-            Until then no control is shown. The action itself already refuses a resend, because
-            can_manage_person_account() is false for a person who has an account.
-          */}
+          {canResend ? (
+            <ActionForm action={sendInviteAction} submitLabel="Resend invite">
+              <input type="hidden" name="id" value={personId} />
+              <p>They have not used their invite yet. We will email {email} the link again.</p>
+            </ActionForm>
+          ) : null}
           <ConfirmAction
             action={disableLoginAction}
             label="Disable login"
@@ -86,6 +90,10 @@ export default async function PersonPage({ params }: { params: Promise<{ personI
   if (!person.ok) return <ErrorMessage message={person.message} />;
   if (!person.data) notFound();
   const p = person.data;
+  const canResend =
+    account && account.ok && account.data === 'active' && p.archived_at === null
+      ? await canResendPersonInvite(orgId, p.id)
+      : false;
 
   return (
     <main>
@@ -117,6 +125,7 @@ export default async function PersonPage({ params }: { params: Promise<{ personI
                 account: account.data,
               })}
               name={displayName(p)}
+              canResend={canResend}
             />
           ) : null}
         </>

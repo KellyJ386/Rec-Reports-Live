@@ -67,7 +67,7 @@ export function createPushChannel(deps: PushChannelDeps): DeliveryChannel {
     async send({ delivery, notification }): Promise<SendResult> {
       if (!deps.vapid) return { outcome: 'skipped', reason: 'push not configured' };
 
-      const targets = await deps.devices.getPushTargets(delivery.organizationId, delivery.personId);
+      const targets = await deps.devices.getPushTargets(delivery.id);
       if (targets.length === 0) return { outcome: 'skipped', reason: 'no push device' };
 
       const payload = JSON.stringify(buildPushPayload(notification, deps.siteUrl));

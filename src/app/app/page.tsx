@@ -6,8 +6,8 @@ import { getMyTitleScopes, getStaffAccess } from '@/experiences/employee/access'
 import {
   countUnreadMessages,
   countUnreadNotifications,
-  listLiveNotices,
-  listMyAcknowledgments,
+  acknowledgedIds,
+  listMyNotices,
   needsAcknowledgment,
 } from '@/domains/communications';
 import { countMyOpenTasks } from '@/domains/workflows';
@@ -37,13 +37,11 @@ export default async function AppHomePage() {
           staff.comms ? countUnreadMessages(orgId, personId) : null,
           countUnreadNotifications(orgId, personId),
           staff.comms
-            ? Promise.all([listLiveNotices(orgId), listMyAcknowledgments(orgId, personId)]).then(
-                ([notices, acks]) => {
-                  if (!notices.ok || !acks.ok) return null;
-                  const acked = new Set(acks.data.keys());
-                  return notices.data.filter((n) => needsAcknowledgment(n, acked)).length;
-                },
-              )
+            ? listMyNotices(orgId).then((notices) => {
+                if (!notices.ok) return null;
+                const acked = acknowledgedIds(notices.data);
+                return notices.data.filter((n) => needsAcknowledgment(n, acked)).length;
+              })
             : null,
         ])
       : [null, null, null, null];

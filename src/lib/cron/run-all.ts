@@ -1,3 +1,5 @@
+import { ClaimLost, DeadlineReached } from './error-class';
+
 /**
  * Runs `fn` for every item, one after another, even when some fail, then rethrows the first
  * failure. One bad recipient must not starve the rest of a fan-out; the event still fails so it
@@ -13,6 +15,8 @@ export async function runAll<T>(
     try {
       await fn(item);
     } catch (error) {
+      // Out of time or out of claim: stop now, do not keep going through the list.
+      if (error instanceof DeadlineReached || error instanceof ClaimLost) throw error;
       if (!failed) {
         failed = true;
         first = error;
@@ -20,6 +24,13 @@ export async function runAll<T>(
     }
   }
   if (failed) throw first;
+}
+
+/** Splits a list into pieces of at most `size`. */
+export function chunk<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
 }
 
 /** Shortens text to `max` characters, adding an ellipsis when it was cut. */

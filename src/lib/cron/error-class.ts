@@ -25,6 +25,22 @@ export class PortError extends Error {
   }
 }
 
+/** Thrown inside a handler when the run's hard time budget is reached: the event is released, not failed. */
+export class DeadlineReached extends Error {
+  constructor() {
+    super('deadline reached');
+    this.name = 'DeadlineReached';
+  }
+}
+
+/** Thrown inside a handler when the claim on its event is gone (the lock could not be extended). */
+export class ClaimLost extends Error {
+  constructor() {
+    super('claim lost');
+    this.name = 'ClaimLost';
+  }
+}
+
 /** Log record: ids, counts and error classes only. */
 export type LogRecord = Record<string, string | number | boolean | null>;
 export type Logger = (record: LogRecord) => void;

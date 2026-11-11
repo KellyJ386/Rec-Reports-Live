@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { WORKFLOW_TRIGGER_TYPES } from './schemas';
 import {
   EVENT_TYPE_OPTIONS,
+  MAX_MANUAL_RETRIES,
+  OVERDUE_RULE_TEMPLATE_MESSAGE,
   availableTaskActions,
+  canRetryJob,
   conditionFromForm,
   conditionToForm,
   describeAssignee,
@@ -17,6 +20,7 @@ import {
   myWorkFilter,
   offsetFromForm,
   offsetToForm,
+  overdueRuleTemplateProblem,
   parseBoardFilters,
 } from './logic';
 
@@ -352,5 +356,27 @@ describe('errorClass', () => {
     expect(errorClass('')).toBe('Unknown error');
     expect(errorClass(': only detail')).toBe('Unknown error');
     expect(errorClass('x'.repeat(200)).length).toBe(60);
+  });
+});
+
+describe('overdueRuleTemplateProblem', () => {
+  it('refuses a template due below 1 minute after the event, for an overdue-task rule only', () => {
+    expect(overdueRuleTemplateProblem('task.overdue', 0)).toBe(OVERDUE_RULE_TEMPLATE_MESSAGE);
+    expect(overdueRuleTemplateProblem('task.overdue', -30)).toBe(OVERDUE_RULE_TEMPLATE_MESSAGE);
+    expect(overdueRuleTemplateProblem('task.overdue', 1)).toBeNull();
+    expect(overdueRuleTemplateProblem('task.overdue', 120)).toBeNull();
+    expect(overdueRuleTemplateProblem('task.overdue', null)).toBeNull();
+    expect(overdueRuleTemplateProblem('incident.submitted', 0)).toBeNull();
+    expect(overdueRuleTemplateProblem(undefined, 0)).toBeNull();
+  });
+});
+
+describe('canRetryJob', () => {
+  it('allows a retry only for a stopped job under the retry cap', () => {
+    expect(MAX_MANUAL_RETRIES).toBe(3);
+    expect(canRetryJob({ status: 'dead', manual_retries: 0 })).toBe(true);
+    expect(canRetryJob({ status: 'dead', manual_retries: 2 })).toBe(true);
+    expect(canRetryJob({ status: 'dead', manual_retries: 3 })).toBe(false);
+    expect(canRetryJob({ status: 'pending', manual_retries: 0 })).toBe(false);
   });
 });

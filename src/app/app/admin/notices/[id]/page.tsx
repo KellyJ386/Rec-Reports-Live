@@ -55,7 +55,9 @@ export default async function AdminNoticePage({
     listAllLocations(orgId, { includeArchived: true }),
     listJobTitles(orgId, { includeArchived: true }),
     listNoticeAudiences(orgId, notice.id),
-    notice.status === 'draft' ? Promise.resolve(null) : listAcknowledgments(orgId, notice.id),
+    notice.status === 'draft' || !notice.requires_acknowledgment
+      ? Promise.resolve(null)
+      : listAcknowledgments(notice.id),
   ]);
   const orgTz = settings.ok && settings.data ? settings.data.default_timezone : 'UTC';
   const homeLocation = notice.location_id
@@ -67,7 +69,14 @@ export default async function AdminNoticePage({
   const locationNames = new Map(locations.ok ? locations.data.map((l) => [l.id, l.name]) : []);
   const titleNames = new Map(titles.ok ? titles.data.map((t) => [t.id, t.name]) : []);
 
-  const ackRows = acks && acks.ok ? acks.data : [];
+  // People who have not confirmed come first, then by the time they confirmed.
+  const ackRows = [...(acks && acks.ok ? acks.data : [])].sort((a, b) => {
+    if ((a.acknowledged_at === null) !== (b.acknowledged_at === null)) {
+      return a.acknowledged_at === null ? -1 : 1;
+    }
+    return (a.acknowledged_at ?? '').localeCompare(b.acknowledged_at ?? '');
+  });
+  const confirmedCount = ackRows.filter((a) => a.acknowledged_at !== null).length;
   const shownAcks = pageOf(ackRows, parsePage(sp.page), PAGE_SIZE);
   const names = await getPersonNames(
     orgId,
@@ -160,8 +169,9 @@ export default async function AdminNoticePage({
           {acks && acks.ok ? (
             <>
               <p>
-                {ackRows.length} {ackRows.length === 1 ? 'person has' : 'people have'} confirmed
-                they read it. The list of people who have not confirmed yet is not available.
+                {confirmedCount} of {ackRows.length}{' '}
+                {ackRows.length === 1 ? 'person has' : 'people have'} confirmed they read it. You
+                only see people you are allowed to see.
               </p>
               {ackRows.length > 0 ? (
                 <>
@@ -176,7 +186,9 @@ export default async function AdminNoticePage({
                       {shownAcks.rows.map((a) => (
                         <tr key={a.person_id}>
                           <td>{names.ok ? (names.data[a.person_id] ?? 'Someone') : 'Someone'}</td>
-                          <td>{formatInZone(a.acknowledged_at, tz)}</td>
+                          <td>
+                            {a.acknowledged_at ? formatInZone(a.acknowledged_at, tz) : 'Not yet'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

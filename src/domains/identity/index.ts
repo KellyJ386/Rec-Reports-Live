@@ -9,6 +9,7 @@ export {
   addPersonJobTitle,
   addRoleAssignment,
   canManagePersonAccount,
+  canResendPersonInvite,
   setAccountDisabled,
   createJobTitle,
   createPersonWithAssignment,

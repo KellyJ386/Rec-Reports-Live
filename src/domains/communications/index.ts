@@ -27,7 +27,7 @@ export {
 export { createWebPushSender } from './worker/web-push-sender';
 export type {
   Channel,
-  CreateNotificationInput,
+  CreateNotificationsInput,
   Delivery,
   DeliveryChannel,
   DeliveryPort,
@@ -55,9 +55,9 @@ export {
   getNotice,
   listAcknowledgments,
   listInbox,
-  listLiveNotices,
+  listMyNotices,
+  acknowledgedIds,
   listManagedNotices,
-  listMyAcknowledgments,
   listNoticeAudiences,
   listNotifications,
   listSent,

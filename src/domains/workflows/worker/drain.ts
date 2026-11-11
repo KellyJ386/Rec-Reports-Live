@@ -1,6 +1,13 @@
-import { consoleLogger, errorClass, type Logger } from '@/lib/cron/error-class';
+import {
+  ClaimLost,
+  DeadlineReached,
+  consoleLogger,
+  errorClass,
+  type Logger,
+} from '@/lib/cron/error-class';
 import type {
   EventHandler,
+  HandlerContext,
   HandlerRegistry,
   OutboxEvent,
   OutboxPort,
@@ -11,7 +18,10 @@ export interface DrainOptions {
   workerId: string;
   /** No new batch is claimed once this much time has passed. */
   softBudgetMs: number;
-  /** Claimed events not started by now are left to their lock expiry instead of being half-run. */
+  /**
+   * Past this point nothing new is started: claimed events not yet started are given back with
+   * release_outbox_event, and a handler stops at its next checkpoint (its event is released too).
+   */
   hardBudgetMs: number;
   batchSize: number;
   lockSeconds: number;
@@ -34,7 +44,7 @@ export interface DrainSummary {
   unknownType: number;
   /** complete/fail found the claim gone (another worker took it). */
   lostClaim: number;
-  /** Claimed but not started before the hard budget. They are reclaimed after the lock expires. */
+  /** Claimed but not finished before the hard budget. Given back (release_outbox_event, no attempt counted); the next run takes them. */
   abandoned: number;
   budgetExhausted: boolean;
 }
@@ -82,11 +92,16 @@ export async function drainOutbox(
 
     for (const [index, event] of events.entries()) {
       if (now() - started >= options.hardBudgetMs) {
-        summary.abandoned += events.length - index;
+        await releaseAll(events.slice(index), outbox, options.workerId, summary, log);
         summary.budgetExhausted = true;
         return summary;
       }
-      await processEvent(event, outbox, registry, options.workerId, summary, log);
+      const outcome = await processEvent(event, outbox, registry, options, started, summary, log);
+      if (outcome === 'deadline') {
+        await releaseAll(events.slice(index + 1), outbox, options.workerId, summary, log);
+        summary.budgetExhausted = true;
+        return summary;
+      }
     }
     // A short batch means nothing else was due.
     if (events.length < options.batchSize) break;
@@ -94,14 +109,47 @@ export async function drainOutbox(
   return summary;
 }
 
-async function processEvent(
-  event: OutboxEvent,
+/** Gives claimed events back unprocessed. A failure to release only costs a lock-expiry wait. */
+async function releaseAll(
+  events: readonly OutboxEvent[],
   outbox: OutboxPort,
-  registry: HandlerRegistry,
   worker: string,
   summary: DrainSummary,
   log: Logger,
 ): Promise<void> {
+  for (const event of events) {
+    summary.abandoned += 1;
+    try {
+      await outbox.release(event.id, worker);
+    } catch (error) {
+      log({ event: 'outbox.release_failed', id: event.id, errorClass: errorClass(error) });
+    }
+  }
+}
+
+async function processEvent(
+  event: OutboxEvent,
+  outbox: OutboxPort,
+  registry: HandlerRegistry,
+  options: DrainOptions,
+  started: number,
+  summary: DrainSummary,
+  log: Logger,
+): Promise<'done' | 'deadline'> {
+  const worker = options.workerId;
+  const now = options.now ?? Date.now;
+  let lastExtend = now();
+  const ctx: HandlerContext = {
+    async checkpoint() {
+      if (now() - started >= options.hardBudgetMs) throw new DeadlineReached();
+      // Extend a quarter of the way through the lock, so a long fan-out keeps its claim.
+      if (now() - lastExtend >= (options.lockSeconds * 1000) / 4) {
+        const held = await outbox.extendLock(event.id, worker, options.lockSeconds);
+        if (!held) throw new ClaimLost();
+        lastExtend = now();
+      }
+    },
+  };
   let step = 'ledger';
   try {
     const handlers: readonly EventHandler[] | undefined = registry.get(event.type);
@@ -116,7 +164,8 @@ async function processEvent(
           continue;
         }
         step = handler.name;
-        await handler.run(event);
+        await ctx.checkpoint();
+        await handler.run(event, ctx);
         step = `${handler.name}:ledger`;
         await outbox.recordHandler(event.id, handler.name);
         summary.handlersRun += 1;
@@ -129,7 +178,24 @@ async function processEvent(
       summary.lostClaim += 1;
       log({ event: 'outbox.lost_claim', id: event.id });
     }
+    return 'done';
   } catch (error) {
+    if (error instanceof DeadlineReached) {
+      // Out of time mid-event: give it back. Handlers already finished are in the ledger and the
+      // rest are idempotent, so the next run carries on where this one stopped.
+      summary.abandoned += 1;
+      try {
+        await outbox.release(event.id, worker);
+      } catch (releaseError) {
+        log({ event: 'outbox.release_failed', id: event.id, errorClass: errorClass(releaseError) });
+      }
+      return 'deadline';
+    }
+    if (error instanceof ClaimLost) {
+      summary.lostClaim += 1;
+      log({ event: 'outbox.lost_claim', id: event.id });
+      return 'done';
+    }
     const cls = errorClass(error);
     log({ event: 'outbox.handler_failed', id: event.id, type: event.type, step, errorClass: cls });
     try {
@@ -141,5 +207,6 @@ async function processEvent(
       // The database is unreachable: the lock expires and the event is reclaimed.
       log({ event: 'outbox.fail_failed', id: event.id, errorClass: errorClass(failError) });
     }
+    return 'done';
   }
 }

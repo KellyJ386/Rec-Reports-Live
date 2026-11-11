@@ -421,6 +421,24 @@ export function describeOffset(minutes: number | null): string {
   return `Due ${n} ${unit} ${form.direction} the event time`;
 }
 
+export const OVERDUE_RULE_TEMPLATE_MESSAGE =
+  'A rule for overdue tasks needs a task template that is due at least 1 minute after the event. Change the template, or pick another one.';
+
+/**
+ * A rule on `task.overdue` makes a task about a task that is already late. The database refuses a
+ * template that is due at or before the event time (offset 0 or below), because that task would
+ * be overdue the moment it is made and the rule would loop. No due time at all (null) is fine.
+ * Returns the message to show, or null when the pair is allowed.
+ */
+export function overdueRuleTemplateProblem(
+  eventType: string | undefined,
+  dueOffsetMinutes: number | null | undefined,
+): string | null {
+  if (eventType !== 'task.overdue') return null;
+  if (dueOffsetMinutes === null || dueOffsetMinutes === undefined) return null;
+  return dueOffsetMinutes < 1 ? OVERDUE_RULE_TEMPLATE_MESSAGE : null;
+}
+
 export const ASSIGN_TO_OPTIONS = [
   { value: 'none', label: 'Nobody (anyone at the location can pick it up)' },
   { value: 'job_title', label: 'People with a job title' },
@@ -491,6 +509,14 @@ export function errorClass(lastError: string | null | undefined): string {
     .trim()
     .slice(0, 60);
   return cleaned === '' ? 'Unknown error' : cleaned;
+}
+
+/** How many times a failed job may be retried by hand (private.outbox_max_manual_retries()). */
+export const MAX_MANUAL_RETRIES = 3;
+
+/** True while a stopped job may still be retried by hand. */
+export function canRetryJob(job: { status: string; manual_retries: number }): boolean {
+  return job.status === 'dead' && job.manual_retries < MAX_MANUAL_RETRIES;
 }
 
 export function jobStateLabel(status: string): string {

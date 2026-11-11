@@ -1,8 +1,8 @@
 import 'server-only';
 // The composition root of the background worker, and the ONLY place the service-role client is
 // created for it (src/lib/admin-client-usage.test.ts allowlists this file). It hands the client
-// to the domains' port factories, which call nothing but the service_role worker functions and a
-// few narrow reads. Only src/app/api/cron/** routes may import this file.
+// to the domains' port factories, which call nothing but the service_role worker functions.
+// Only src/app/api/cron/** routes may import this file.
 import { randomUUID } from 'node:crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getDeliveryEnv, getSiteUrl } from '@/lib/env';

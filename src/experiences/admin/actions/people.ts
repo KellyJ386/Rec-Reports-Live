@@ -7,6 +7,7 @@ import { blankToNull } from '@/lib/text';
 import {
   INVITE_NOT_ALLOWED_MESSAGE,
   canManagePersonAccount,
+  canResendPersonInvite,
   createPersonWithAssignment,
   getAccountStatus,
   getPerson,
@@ -156,9 +157,13 @@ export async function sendInviteAction(
   if (!account.ok) return bad(formData, account.message);
   if (account.data === 'disabled') return bad(formData, 'Turn the login on first.');
 
-  if (!(await canManagePersonAccount(orgId, id))) {
-    return bad(formData, INVITE_NOT_ALLOWED_MESSAGE);
-  }
+  // A person with a login can only be sent the invite again, and the database says when
+  // (can_resend_person_invite); a person without one is a first invite (can_manage_person_account).
+  const allowed =
+    account.data === 'active'
+      ? await canResendPersonInvite(orgId, id)
+      : await canManagePersonAccount(orgId, id);
+  if (!allowed) return bad(formData, INVITE_NOT_ALLOWED_MESSAGE);
 
   const result = await inviteAccount({ organizationId: orgId, personId: id, email });
   if (!result.ok) return bad(formData, result.message);

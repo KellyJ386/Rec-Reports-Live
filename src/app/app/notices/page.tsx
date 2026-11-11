@@ -6,8 +6,8 @@ import { StaffNav } from '@/experiences/employee/ui';
 import { formatInZone } from '@/lib/time';
 import { PAGE_SIZE, parsePage } from '@/lib/paging';
 import {
-  listLiveNotices,
-  listMyAcknowledgments,
+  acknowledgedIds,
+  listMyNotices,
   needsAcknowledgment,
   orderNoticesForReader,
   pageOf,
@@ -22,19 +22,18 @@ export default async function NoticesPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { orgId, personId, access } = await requireStaffArea();
+  const { orgId, access } = await requireStaffArea();
   if (!access.comms) notFound();
   const page = parsePage((await searchParams).page);
 
-  const [notices, acks, settings, locations] = await Promise.all([
-    listLiveNotices(orgId),
-    personId ? listMyAcknowledgments(orgId, personId) : Promise.resolve(null),
+  const [notices, settings, locations] = await Promise.all([
+    listMyNotices(orgId),
     getOrganizationSettings(orgId),
     getLocationMap(orgId),
   ]);
   const tz = settings.ok && settings.data ? settings.data.default_timezone : 'UTC';
 
-  const acked = new Set(acks && acks.ok ? [...acks.data.keys()] : []);
+  const acked = notices.ok ? acknowledgedIds(notices.data) : new Set<string>();
   const ordered = notices.ok ? orderNoticesForReader(notices.data, acked) : [];
   const shown = pageOf(ordered, page, PAGE_SIZE);
 
@@ -43,7 +42,6 @@ export default async function NoticesPage({
       <h1>Notices</h1>
       <StaffNav access={access} />
       {!notices.ok ? <ErrorMessage message={notices.message} /> : null}
-      {acks && !acks.ok ? <ErrorMessage message={acks.message} /> : null}
       {notices.ok && ordered.length === 0 ? <p>There are no notices for you right now.</p> : null}
       <p>Notices that need your answer come first. Times are in {tz}.</p>
       <ul>
