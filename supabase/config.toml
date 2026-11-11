@@ -1,0 +1,101 @@
+# Local development and CI config. Checked against Supabase CLI docs; it cannot be
+# run in every sandbox, so CI (`supabase db start`, `supabase test db`) is the check.
+project_id = "rec-reports-live"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 17
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[auth]
+# Hosted project settings to match (Dashboard > Authentication; config.toml only drives the
+# local stack and CI, it does not change the hosted project):
+#   - Sign In / Providers > "Allow new users to sign up": OFF (admins provision users)
+#   - Email provider stays ON (password sign-in); do not turn the provider itself off
+#   - Sign In / Providers > Email > minimum password length: 12
+#   - Email > "Secure password change": ON (recent sign-in needed to change a password)
+#   - URL Configuration: Site URL = the production URL; Redirect URLs = exact URLs only,
+#     no wildcards in production (for example https://<prod-host>/auth/confirm)
+#   - Set SITE_URL in the app environment to the same production URL
+#   - Rate Limits (Dashboard > Authentication > Rate Limits): same numbers as [auth.rate_limit]
+#     below. These are the only limits that cannot be skipped by calling Supabase Auth's
+#     public API directly. The app's own limits (src/lib/rate-limit-constants.ts) only cover
+#     requests that come through the app's forms.
+#   - Attack Protection > CAPTCHA (Turnstile or hCaptcha): ON for sign-in and password reset.
+#     Needs the matching token field in the app's forms before it can be switched on, so it is
+#     off in this file (the CLI only drives it through [auth.captcha], which is not set here).
+#   - Authentication > Hooks, the real per-account control (the app limits cannot see attempts
+#     made straight against Auth, and a per-IP limit is not a per-account one):
+#       * "MFA verification attempt" hook: count failed one-time codes per user and reject
+#         (decision = reject) after a few, which also signs the user out of every session.
+#       * "Password verification attempt" hook: count failed passwords per user and reject or
+#         delay after a few. Not implemented yet. Use a per-user counter that a correct
+#         password from a new address does not reset, and never reject on the first miss, or
+#         anyone who knows an email can lock its owner out (see the trade-off note in
+#         src/lib/rate-limit-constants.ts).
+#   - JWT expiry: 900 seconds (15 minutes) or less, so a session that was revoked (idle
+#     sign-out, "sign out everywhere", a disabled login) stops working at the database soon.
+#     Signing out revokes the session and its refresh token at once, but an access token that
+#     was already issued stays valid for the database until it expires; Supabase cannot revoke
+#     an issued JWT.
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/auth/confirm"]
+# New accounts are created by admins (Admin API / create_person_with_assignment flow).
+# This blocks self sign-up for every provider; it does not block admin-created users.
+enable_signup = false
+minimum_password_length = 12
+# Seconds. See "JWT expiry" above.
+jwt_expiry = 900
+
+# Supabase Auth's own rate limits (hosted: Dashboard > Authentication > Rate Limits). Per-IP
+# numbers are per 5 minutes; email_sent and sms_sent are per hour for the whole project.
+# Kept conservative, but sized for a staff room behind one shared address: roughly 30 people can
+# sign in from one network within 5 minutes. email_sent only takes effect with custom SMTP
+# (the built-in mailer has its own, lower, fixed limit).
+[auth.rate_limit]
+email_sent = 10
+sms_sent = 5
+anonymous_users = 5
+token_refresh = 150
+sign_in_sign_ups = 30
+token_verifications = 30
+web3 = 5
+
+[auth.email]
+# Keep the email provider on: password sign-in and password reset depend on it. Sign-up is
+# already blocked by [auth] enable_signup = false (auth.email.enable_signup is deprecated).
+enable_signup = true
+# A password change needs a recent sign-in or reauthentication.
+secure_password_change = true
+
+# Two-step sign-in (TOTP). Required in the app for admin-tier access (the database ignores
+# admin access on a session that is not aal2); optional for everyone else. Hosted project:
+# Dashboard > Authentication > Multi-Factor must have "TOTP" enrol AND verify turned on.
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+# Email links go to the app's own /auth/confirm page, which verifies the token only when the
+# person presses a button (so link scanners cannot use it up). The default templates link to
+# Supabase's own /verify endpoint instead, which would skip that page. Hosted project:
+# paste the same content into Dashboard > Authentication > Email Templates (Invite user and
+# Reset password) and set Site URL to the production URL.
+[auth.email.template.invite]
+subject = "Your Rec Reports invite"
+content_path = "./supabase/templates/invite.html"
+
+[auth.email.template.recovery]
+subject = "Reset your Rec Reports password"
+content_path = "./supabase/templates/recovery.html"

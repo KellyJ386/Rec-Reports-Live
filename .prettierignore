@@ -1,0 +1,12 @@
+.next
+node_modules
+package-lock.json
+coverage
+next-env.d.ts
+supabase/migrations
+supabase/tests
+docs
+supabase
+scripts/db
+CLAUDE.md
+README.md

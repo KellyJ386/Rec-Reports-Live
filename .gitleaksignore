@@ -1,0 +1,5 @@
+# Test fixtures that look like keys but are not secrets. One fingerprint per line.
+# Sentinel strings used to prove push keys are redacted in the audit log.
+090b768428f83ca95a808a6b6c2009bf16fea3cd:supabase/tests/database/160_audit_redaction.test.sql:generic-api-key:317
+# Sample push subscription values from the Web Push documentation.
+76587c01af3cb7b4c8ec9692311cd3b1eb972350:src/domains/communications/schemas.test.ts:generic-api-key:194
