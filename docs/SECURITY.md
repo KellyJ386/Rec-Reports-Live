@@ -22,7 +22,7 @@ Same model as RinkReports Pro (see `docs/REUSE_INVENTORY.md`):
 
 **Membership.** A user is a member of an organization when they have an `accounts` row there with `disabled_at` null, their `people` row is not archived, and they hold at least one `role_assignments` row on a non-archived role (at a non-archived location, if location scoped). A `user_permissions` row alone grants nothing. A non-member sees nothing at all, including modules and system roles.
 
-**Admin tier needs MFA (`aal2`)** (migration `20261112000100_auth_hardening`). Platform-admin status, and every assignment whose effective rank is >= 80 (admin at a location = 80, admin at organization scope = 90), count only when the session JWT has `aal` = `aal2` (`auth.jwt() ->> 'aal'`; Supabase Auth issues `aal1` after the first factor and `aal2` after a verified MFA challenge; a token without the claim is `aal1`). At `aal1` those grants are treated as if they did not exist: an admin-only user is a non-member (sees nothing, can do nothing), and someone who is admin at one location and staff at another keeps exactly the staff access. It is applied once, in the two cores everything else is built on: `private.my_assignments()` (the caller's assignments) and `private.person_effective_level()` when the person is the caller's own; plus `public.is_platform_admin()`. Every helper, policy, trigger and RPC inherits it. The threshold lives in `private.admin_tier_min_rank()` (80). A **target's** rank for the tier rule (`private.person_max_rank`) and `person_effective_permission` about **another** person are not affected, so an admin always counts at full rank as a target. `public.session_needs_mfa()` returns true when the caller holds admin-tier access that is suppressed right now, so the app can send them to the second-step screen. Consequences to know: an `aal1` admin-only user also cannot read their own messages and notifications or edit their own profile until they pass MFA (they are a non-member until then).
+**Admin tier needs MFA (`aal2`)** (migration `20261112000100_auth_hardening`). Platform-admin status, and every assignment whose effective rank is >= 80 (admin at a location = 80, admin at organization scope = 90), count only when the session JWT has `aal` = `aal2` (`auth.jwt() ->> 'aal'`; Supabase Auth issues `aal1` after the first factor and `aal2` after a verified MFA challenge; a token without the claim is `aal1`). At `aal1` those grants are treated as if they did not exist: an admin-only user is a non-member (sees nothing, can do nothing), and someone who is admin at one location and staff at another keeps exactly the staff access. It is applied once, in the two cores everything else is built on: `private.my_assignments()` (the caller's assignments) and `private.person_effective_level()` when the person is the caller's own; plus `public.is_platform_admin()`. Every helper, policy, trigger and RPC inherits it. The threshold lives in `private.admin_tier_min_rank()` (80). A **target's** rank for the tier rule (`private.person_max_rank`) and `person_effective_permission` about **another** person are not affected, so an admin always counts at full rank as a target. `public.session_needs_mfa()` returns true when the caller holds admin-tier access that is suppressed right now, so the app can send them to the second-step screen. **Voluntary MFA** (since `20261112000600`): a user who has a verified factor (`auth.mfa_factors`, `status = 'verified'`) needs `aal2` for **any** grant to count, whatever their rank; at `aal1` they are a non-member everywhere and `session_needs_mfa()` is true for them. Same two cores (`private.user_has_verified_mfa(uid)` inside `my_assignments` and the caller's own `person_effective_level`). If `auth.mfa_factors` does not exist (the plain-Postgres stand-in), nobody has a verified factor, which equals the old rule. Consequences to know: an `aal1` admin-only user also cannot read their own messages and notifications or edit their own profile until they pass MFA (they are a non-member until then).
 
 **Effective rank.** `roles.rank`, plus 10 when the assignment is organization scoped. So: org admin 90, location admin 80, manager 50, staff 10, custom 1-79, platform admin 100. A person's rank in scope is the highest of their assignments at org scope or at that location.
 
@@ -158,11 +158,11 @@ Every boolean helper used as a gate in a PL/pgSQL `IF` must never return NULL (`
 ```sql
 public.consume_rate_limit(p_bucket text, p_key text, p_max integer, p_window_seconds integer) returns boolean  -- service_role ONLY
 ```
-Fixed window: counts one hit for (bucket, key) in the current window and returns true while the count is <= `p_max`. Keys (an email or an IP) are normalized (`lower(trim())`) and stored only as HMAC-SHA256 with a random per-database secret (`private.rate_limit_secret`), so a copy of the table cannot be reversed with a list of emails. Tables live in schema `private` (not exposed by the API), have RLS on with no policies and no grants for any API role, and are not audited. Each call drops that key's expired windows; `private.purge_rate_limit_counters()` (service_role, direct connection or pg_cron only) deletes all expired windows. Not callable by `anon` or `authenticated`.
+Fixed window: counts one hit for (bucket, key) in the current window and returns true while the count is <= `p_max`. Keys (an email or an IP) are normalized (since `000600`: every Unicode whitespace or invisible separator character removed anywhere, then lowercased; `private.normalize_rate_limit_key`) and stored only as HMAC-SHA256 with a random per-database secret (`private.rate_limit_secret`), so a copy of the table cannot be reversed with a list of emails. Tables live in schema `private` (not exposed by the API), have RLS on with no policies and no grants for any API role, and are not audited. Each call drops that key's expired windows; `private.purge_rate_limit_counters()` (service_role, direct connection or pg_cron only) deletes all expired windows. Not callable by `anon` or `authenticated`.
 
 ### Outbox and jobs (migration `20261112000200_outbox_and_jobs`)
 
-`private.emit_event(org, location, type, entity_table, entity_id, payload, schema_version, correlation_id, available_at)` is the only writer of `outbox_events`; nobody (service_role included) has INSERT. It is called inside the same transaction as the business change. **Payload rule** (`private.validate_event_payload`, also a CHECK): a flat object of at most 32 snake_case keys whose values are null, boolean, number, a string <= 200 chars, or an array of <= 100 strings <= 64 chars (ids); at most 8 kB. No nested objects, so free text and record copies cannot ride along; handlers re-read rows. `last_error` must not contain personal data (it is redacted in the audit log anyway).
+`private.emit_event(org, location, type, entity_table, entity_id, payload, schema_version, correlation_id, available_at, causation_event_id)` (10th parameter since `000600`) is the only writer of `outbox_events`; nobody (service_role included) has INSERT. It is called inside the same transaction as the business change. **Payload rule** (`private.validate_event_payload`, also a CHECK): a flat object of at most 32 snake_case keys whose values are null, boolean, number, a string <= 200 chars, or an array of <= 100 strings <= 64 chars (ids); at most 8 kB. No nested objects, so free text and record copies cannot ride along; handlers re-read rows. `last_error` must not contain personal data (it is redacted in the audit log anyway).
 
 Worker API, **service_role only** (each also refuses a caller with a user JWT):
 ```sql
@@ -197,7 +197,7 @@ public.emit_overdue_task_events(p_limit integer default 500) returns integer   -
 
 ### Communications RPCs (migration `20261112000400_communications`)
 
-Module `communications` levels: `view` = read notices you are the audience of and your own messages; `edit` = also send messages; `admin` = manage notices in scope. **Audience rule** (`private.person_in_notice_audience`, one implementation for the read policy and the worker fan-out): an audience row (location or whole org) x (job title or everyone) matches a person who has `communications` >= `view` at that location (org-wide row: at org scope or at any location they are assigned to), computed with `person_effective_level` (so: active account, not archived, covering assignment, MFA rule for the caller), and, for a job-title row, holds that non-archived title everywhere or at that location. **Messages are private**: only sender and recipients read them; no manager, admin or platform admin can (a deliberate choice; Phase 1 does not require a platform-admin exception). The audit log redacts message and notice bodies; message events carry ids only.
+Module `communications` levels: `view` = read notices you are the audience of and your own messages; `edit` = also send messages; `admin` = manage notices in scope. **Audience rule** (`private.person_in_notice_audience`, one implementation for the read policy and the worker fan-out): an audience row (location or whole org) x (job title or everyone) matches a person who has `communications` >= `view` at that location (org-wide row: at org scope or at any location they are assigned to), computed with `person_effective_level` (so: active account, not archived, covering assignment, MFA rule for the caller), and, for a job-title row, holds that non-archived title everywhere or at that location. **Messages are private**: only sender and recipients read them; no manager, admin or platform admin can (a deliberate choice; Phase 1 does not require a platform-admin exception). The audit log redacts message and notice bodies. Since `000600` this is literally true for metadata too: `message.sent` carries only `message_id`; no tenant (platform admins included) can read `message.*` outbox rows or the audit rows of `messages`, `message_recipients`, `notifications`, `notification_deliveries`, `push_subscriptions`, `notification_preferences`, `outbox_event_handlers`; so an org admin or platform admin cannot learn who messaged whom, or when.
 ```sql
 public.publish_notice(p_notice_id uuid, p_publish_at timestamptz default null) returns void  -- needs >= 1 audience row; emits notice.published available at publish_at
 public.archive_notice(p_notice_id uuid) returns void
@@ -232,6 +232,60 @@ public.disable_push_subscription(p_id uuid) returns boolean
 `create_notification` writes three deliveries: `in_app` sent at once; `email` and `push` pending, or skipped when the person turned the channel off (**ignored for `critical`**) or, for push, has no active device. Deliveries retry up to `private.delivery_max_attempts()` = 5 with the outbox backoff. Titles, bodies and link paths of notifications, delivery errors and push endpoints/keys are redacted in the audit log.
 
 Policy style: wrap argument-free helpers in a subselect (`organization_id in (select public.auth_org_ids())`, `(select public.is_platform_admin())`) so Postgres evaluates them once per statement. Policies on identity tables only call these definer helpers, so they never recurse. RLS is enabled (not `force`d) on every table: the definer helpers rely on the table owner bypassing RLS.
+
+### Phase 2 review fixes (migration `20261112000600_phase2_review_fixes`)
+
+**Limits (all of them, one list).** Per person (keyed by the caller's auth user id, `private.write_limits()`, counted with `consume_rate_limit` under bucket `write.<action>`); a refused call raises **SQLSTATE `PT429`, message `slow down`** (PostgREST answers HTTP 429) and does not count:
+
+| Action | Limit | Where |
+| --- | --- | --- |
+| `task_create` | 60 / 10 min | `create_task` |
+| `task_comment` | 60 / 10 min | `add_task_comment` |
+| `task_transition` | 120 / 10 min | `start_task`, `complete_task`, `reopen_task`, `assign_task`, `cancel_task` |
+| `message_send` | 30 / 10 min | `send_message` |
+| `notice_publish` | 20 / hour | `publish_notice` |
+| `notice_critical` | 5 / day | `publish_notice` of a `critical` notice (on top of the above) |
+| `push_save` | 10 / hour | `save_push_subscription` |
+
+Other limits: event causation depth 3 (`private.outbox_max_causation_depth()`); 20 enabled workflow rules per organization per event type (`private.max_enabled_rules_per_event_type()`); 10 push subscriptions per person, oldest replaced (`private.max_push_subscriptions_per_person()`); 3 manual retries per dead event (`private.outbox_max_manual_retries()`); unchanged: outbox 8 attempts, deliveries 5, batches 1-500, overdue sweep 1-5000, `create_notifications` 1-10000 people.
+
+**Workflow loops.** No rule reacts to an event about a rule-made task; no rule matches an event at causation depth 3; `task.overdue` rules need a template due >= 1 minute later (null offset allowed); 20 enabled rules per org per type (checked under an advisory lock). The `workflow_rules` trigger checks, in order: member of the org, `tasks` = `admin` in the rule's scope, the template exists in the org **and** is readable by the caller (all three: 42501 `not allowed`, so it never tells a template at another location from a missing one).
+
+**Fairness.** `claim_outbox_events`, `claim_notification_deliveries` and `emit_overdue_task_events` take each organization's oldest due row first, then each one's second, and so on. Claim names are per-claim tokens in practice (the app passes `<job>:<random uuid>` per invocation; a reclaim overwrites `locked_by`), so signatures are unchanged.
+
+**Push.** One allowlist, `private.push_endpoint_allowed(text)`: https, no userinfo, port 443 or none, host `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.apple.com`, `*.notify.windows.com`. Enforced by a CHECK on `push_subscriptions` and by `save_push_subscription` (22023 `this push service is not supported`). Saving an endpoint removes every other person's row for that endpoint (any org; shared phone or kiosk) without saying whether there was one.
+
+**Other.** Locks are taken only after the permission check (`lock_task_for_caller`, `retry_dead_outbox_event`, `publish_notice`, `archive_notice`), so a caller without access cannot detect a row by waiting on its lock. Archived job titles route nothing. A template whose `assign_person_id` the reader cannot see is not readable. Notice fan-out returns nobody unless the notice is published and live. The platform-admin branch of `person_effective_level` honours a disabled account or archived person. Append-only tables (`task_events`, `acknowledgments`) refuse UPDATE, DELETE and TRUNCATE for every role; DELETE passes only as the FK cascade of deleting the task / notice / organization. No timestamp column accepts +/-infinity. Free-text titles (`tasks.title`, `notices.title`, `task_templates.title`, `workflow_rules.name`) are redacted in the audit log.
+
+New and changed functions (all security definer, `search_path = ''`; service_role-only ones also refuse any JWT with a `sub`):
+```sql
+-- authenticated + service_role
+public.notice_acknowledgment_status(p_notice_id uuid) returns table (person_id uuid, acknowledged_at timestamptz)
+    -- communications = admin over the notice's home scope, else 42501; audience + acknowledgers, limited to people the caller can see
+public.my_notices(p_organization_id uuid default null, p_limit integer default 50) returns table (notice_id uuid,
+    organization_id uuid, location_id uuid, title text, body text, urgency text, requires_acknowledgment boolean,
+    publish_at timestamptz, expires_at timestamptz, acknowledged_at timestamptz)   -- live notices addressed to the caller; <= 200
+public.can_resend_person_invite(p_organization_id uuid, p_person_id uuid) returns boolean
+    -- tier rule of can_manage_person_account; true only for an active account whose auth user never confirmed and never signed in
+-- service_role only
+public.create_notifications(p_event_id uuid, p_person_ids uuid[], p_kind text, p_title text, p_summary text default null,
+    p_link text default null, p_urgency text default null) returns integer   -- people who now have it (new or existing)
+public.worker_task_for_event(p_event_id uuid) returns table (task_id, organization_id, location_id, location_name, title,
+    status, priority, due_at, assigned_person_id, assigned_job_title_id)
+public.worker_notice_for_event(p_event_id uuid) returns table (notice_id, organization_id, location_id, title, status, urgency,
+    requires_acknowledgment, publish_at, expires_at)
+public.worker_notification_for_delivery(p_delivery_id uuid) returns table (delivery_id, notification_id, organization_id,
+    person_id, channel, status, attempts, kind, title, body, link_path, urgency)
+public.worker_email_for_delivery(p_delivery_id uuid) returns text   -- confirmed auth.users.email of the person's active account; never people.email
+public.worker_push_subscriptions_for_delivery(p_delivery_id uuid) returns table (subscription_id, endpoint, p256dh, auth_secret)
+public.release_outbox_event(p_id uuid, p_worker text) returns boolean            -- give back a claim, attempt not counted
+public.release_notification_delivery(p_id uuid, p_worker text) returns boolean
+public.extend_outbox_lock(p_id uuid, p_worker text, p_seconds integer) returns boolean   -- holder only, lock not yet expired; 5-3600
+public.escalate_overdue_task(p_event_id uuid) returns setof uuid
+    -- task.overdue event; once per task per due_at; records an 'escalated' task_events row; returns tasks = admin people at the
+    -- location when the task is unassigned or the assignee has not started/completed/reopened/commented; idempotent per event
+```
+Changed behaviour of existing functions: `retry_dead_outbox_event` refuses `message.*` events (42501) and a 4th manual retry (22023); `publish_notice` validates everything before writing (an expiry before the publish time is 22023, not 23514); `fail_notification_delivery` keeps `next_attempt_at` on a final failure; `create_task` / `publish_notice` refuse non-finite times with 22023.
 
 ### People RPCs (migration `20261111000500_people_rpcs`)
 
@@ -269,7 +323,7 @@ Swaps one assignment for another for the same person in one transaction. Both th
 
 ### Audit log
 
-Append-only, written by a trigger in the same transaction as every change to a Phase 1 table (details in `docs/DATA_MODEL.md`). UPDATE, DELETE and TRUNCATE raise for every role, including service_role and the owner. Only the trigger function inserts rows: neither `authenticated` nor `service_role` has INSERT, so no API key can forge an actor or timestamp. The Phase 4 "sensitive record viewed" rows will need a dedicated security-definer writer. Only someone who owns the table (the migration role) could drop or disable that trigger, so a migration that touches `audit_log` triggers needs security review. Reads of Sensitive data are not captured by triggers; Phase 4 must write those audit rows explicitly.
+Append-only, written by a trigger in the same transaction as every change to a Phase 1 table and most Phase 2 changes (exactly what is and is not audited for Phase 2 is listed in `docs/DATA_MODEL.md`; worker bookkeeping on `outbox_events`, `outbox_event_handlers` and `notification_deliveries` is not) (details in `docs/DATA_MODEL.md`). UPDATE, DELETE and TRUNCATE raise for every role, including service_role and the owner. Only the trigger function inserts rows: neither `authenticated` nor `service_role` has INSERT, so no API key can forge an actor or timestamp. The Phase 4 "sensitive record viewed" rows will need a dedicated security-definer writer. Only someone who owns the table (the migration role) could drop or disable that trigger, so a migration that touches `audit_log` triggers needs security review. Reads of Sensitive data are not captured by triggers; Phase 4 must write those audit rows explicitly.
 
 ## Data classes
 
@@ -284,7 +338,7 @@ Append-only, written by a trigger in the same transaction as every change to a P
 
 - RLS enabled on every table, with no permissive default. Helper functions (see "Helper functions") are `security definer` with a fixed `search_path`.
 - MFA for `admin` tier and above (enforced in the database since `20261112000100`; the app still has to run the MFA enrollment and challenge screens); admin idle sign-out after 30 minutes (not built).
-- Rate limits on auth endpoints (database primitive `consume_rate_limit` built; the app still has to call it on sign-in and password reset).
+- Rate limits on auth endpoints (database primitive `consume_rate_limit` built; the app calls it on sign-in and password reset). Per-person write limits on the event-emitting RPCs (`000600`, table above).
 - Server-side zod validation on every mutation.
 - No sensitive fields in logs or error reports.
 - Secrets live only in Vercel and Supabase settings, and gitleaks runs in CI.

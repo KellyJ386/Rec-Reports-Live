@@ -38,9 +38,26 @@ create table auth.users (
   email text unique,
   raw_app_meta_data jsonb not null default '{}'::jsonb,
   raw_user_meta_data jsonb not null default '{}'::jsonb,
+  email_confirmed_at timestamptz,
+  last_sign_in_at timestamptz,
+  banned_until timestamptz,
+  deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Hosted Supabase uses enums for factor_type and status. The migrations
+-- compare status as text, so plain text columns behave the same here.
+create table auth.mfa_factors (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  friendly_name text,
+  factor_type text not null default 'totp' check (factor_type in ('totp', 'webauthn', 'phone')),
+  status text not null check (status in ('unverified', 'verified')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index mfa_factors_user_id_idx on auth.mfa_factors (user_id);
 
 create function auth.uid() returns uuid language sql stable as $$
   select coalesce(
