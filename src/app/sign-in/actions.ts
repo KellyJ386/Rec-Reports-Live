@@ -4,6 +4,11 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { firstIssue, signInSchema, type FormState } from '@/lib/auth/schemas';
 import { safeNextPath } from '@/lib/auth/redirect';
+import { stampActivity } from '@/lib/auth/activity-server';
+import { resolveMfaState } from '@/lib/auth/mfa-server';
+import { mfaStepPath } from '@/lib/auth/mfa';
+import { rateLimited } from '@/lib/rate-limit';
+import { RATE_LIMITED_MESSAGE } from '@/lib/rate-limit-constants';
 
 // One message for every credential failure, so the response never says
 // whether the email exists, is unconfirmed or is disabled.
@@ -17,18 +22,29 @@ export async function signIn(_prev: FormState, formData: FormData): Promise<Form
   });
   if (!parsed.success) return { message: firstIssue(parsed.error) };
 
+  // Counted before the password is checked, per email and per client IP, so the answer is the
+  // same whether or not the account exists. Fails closed (see rate-limit-constants.ts).
+  if (await rateLimited('signIn', { email: parsed.data.email })) {
+    return { message: RATE_LIMITED_MESSAGE };
+  }
+
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email: parsed.data.email,
     password: parsed.data.password,
   });
-  if (error) {
+  if (error || !data.user) {
     return {
       message:
-        error.status !== undefined && error.status >= 500
+        error?.status !== undefined && error.status >= 500
           ? 'Sign-in is unavailable right now. Try again in a moment.'
           : BAD_CREDENTIALS,
     };
   }
-  redirect(safeNextPath(parsed.data.next));
+
+  // Start the idle clock, then send admins (and anyone who turned it on) to the second step.
+  await stampActivity(data.user.id);
+  const next = safeNextPath(parsed.data.next);
+  const state = await resolveMfaState(supabase);
+  redirect(mfaStepPath(state.step, next) ?? next);
 }

@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { getSiteUrl } from '@/lib/env';
+import { rateLimited } from '@/lib/rate-limit';
 import { firstIssue, forgotPasswordSchema, type FormState } from '@/lib/auth/schemas';
 
 // Same message whether or not the email exists, and whether or not sending worked.
@@ -13,6 +14,12 @@ export async function requestPasswordReset(
 ): Promise<FormState> {
   const parsed = forgotPasswordSchema.safeParse({ email: formData.get('email') });
   if (!parsed.success) return { message: firstIssue(parsed.error) };
+
+  // Limited per email and per IP. Limited, or a limiter fault (fails closed), gets the same
+  // neutral message and no email, so the response never shows the limit or the account.
+  if (await rateLimited('forgotPassword', { email: parsed.data.email })) {
+    return { ok: true, message: NEUTRAL };
+  }
 
   // The link target comes from the configured SITE_URL only, never from request headers.
   // /auth/confirm defaults `next` to /reset-password. Supabase also only honours redirect

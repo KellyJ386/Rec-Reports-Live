@@ -8,6 +8,8 @@ export * from './schemas';
 export {
   addPersonJobTitle,
   addRoleAssignment,
+  canManagePersonAccount,
+  setAccountDisabled,
   createJobTitle,
   createPersonWithAssignment,
   createRole,
@@ -50,7 +52,11 @@ export type {
   Role,
   UserPermissionRow,
 } from './service';
+export { inviteAccount } from './provisioning';
 export {
+  INVITE_ACCEPTED_MESSAGE,
+  INVITE_NOT_ALLOWED_MESSAGE,
+  inviteView,
   assignableRoles,
   assignmentRank,
   displayName,
@@ -59,4 +65,4 @@ export {
   levelExceeds,
   scopeProblem,
 } from './logic';
-export type { PermissionLevel } from './logic';
+export type { AccountState, InviteView, PermissionLevel } from './logic';

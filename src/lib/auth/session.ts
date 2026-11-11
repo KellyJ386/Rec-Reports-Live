@@ -16,6 +16,8 @@ import {
 } from './context';
 import { hasRecentAuthentication } from './recent-auth';
 import { ACTIVE_ORG_COOKIE, selectActiveOrganization } from './active-org';
+import { enforceIdleTimeout } from './activity-server';
+import { getMfaState } from './mfa-server';
 
 export type AuthUser = { id: string; email: string | null };
 
@@ -34,6 +36,9 @@ export const requireUser = cache(async (): Promise<AuthUser> => {
   const supabase = await createClient();
   const { data, error } = await supabase.auth.getUser();
   if (error || !data.user) redirect('/sign-in');
+  // Admin-tier sessions that have been idle for 30 minutes end here (the proxy normally does
+  // it first). May redirect.
+  await enforceIdleTimeout(supabase, data.user.id);
   return { id: data.user.id, email: data.user.email ?? null };
 });
 
@@ -60,7 +65,8 @@ export const getSessionContext = cache(async (): Promise<SessionContext> => {
   const user = await requireUser();
   const supabase = await createClient();
 
-  const [adminRes, orgIdsRes, accountsRes] = await Promise.all([
+  const [mfa, adminRes, orgIdsRes, accountsRes] = await Promise.all([
+    getMfaState(),
     supabase.rpc('is_platform_admin'),
     supabase.rpc('auth_org_ids'),
     supabase
@@ -112,6 +118,9 @@ export const getSessionContext = cache(async (): Promise<SessionContext> => {
   return buildSessionContext({
     user,
     isPlatformAdmin,
+    aal: mfa.aal,
+    needsMfa: mfa.needsMfa,
+    mfaStep: mfa.step,
     memberOrgIds,
     organizations: z.array(orgRowSchema).parse(orgsRes.data ?? []),
     accounts,

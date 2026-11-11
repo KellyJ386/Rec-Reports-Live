@@ -6,12 +6,20 @@ import { z } from 'zod';
 export const RECENT_AUTH_SECONDS = 15 * 60;
 
 /** Methods that prove the person just clicked an emailed link or typed their password. */
-const FRESH_METHODS = new Set(['recovery', 'otp', 'magiclink', 'password']);
+const FRESH_METHODS = new Set([
+  'recovery',
+  'otp',
+  'magiclink',
+  'password',
+  // An accepted invite (GoTrue amr method `invite`; `email/signup` for the sign-up variant).
+  'invite',
+  'email/signup',
+]);
 
 const amrSchema = z.array(z.object({ method: z.string(), timestamp: z.number().finite() }).loose());
 
 /**
- * True when the JWT's `amr` claim has a recovery/otp/magiclink/password entry whose
+ * True when the JWT's `amr` claim has a recovery/invite/otp/magiclink/password entry whose
  * timestamp (seconds since epoch) is within `maxAgeSeconds` of `nowSeconds` and not in the
  * future (a small allowance for clock skew). Anything malformed is false.
  */

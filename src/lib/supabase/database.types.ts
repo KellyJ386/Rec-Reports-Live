@@ -914,6 +914,14 @@ export type Database = {
         Args: never
         Returns: boolean
       }
+      can_manage_person_account: {
+        Args: { p_organization_id: string; p_person_id: string }
+        Returns: boolean
+      }
+      consume_rate_limit: {
+        Args: { p_bucket: string; p_key: string; p_max: number; p_window_seconds: number }
+        Returns: boolean
+      }
       create_person_with_assignment: {
         Args: {
           p_organization_id: string
@@ -940,6 +948,10 @@ export type Database = {
       replace_role_assignment: {
         Args: { p_assignment_id: string; p_role_id: string; p_location_id: string | null }
         Returns: string
+      }
+      session_needs_mfa: {
+        Args: never
+        Returns: boolean
       }
       update_own_profile: {
         Args: { p_organization_id: string; p_preferred_name: string | null; p_phone: string | null }

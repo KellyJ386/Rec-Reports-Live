@@ -1,8 +1,10 @@
 import Link from 'next/link';
 import { getActiveOrganization, getSessionContext } from '@/lib/auth/session';
+import { redirectIfMfaPending } from '@/lib/auth/mfa-server';
 import { signOut, switchOrganization } from './actions';
 
 export default async function AppHomePage() {
+  await redirectIfMfaPending();
   const ctx = await getSessionContext();
   const active = await getActiveOrganization();
   const orgName = (id: string) =>
@@ -63,6 +65,10 @@ export default async function AppHomePage() {
           <Link href="/app/admin">Admin</Link>
         </p>
       ) : null}
+
+      <p>
+        <Link href="/app/security">Two-step sign-in</Link>
+      </p>
 
       <form action={signOut}>
         <button type="submit">Sign out</button>

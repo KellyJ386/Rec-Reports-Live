@@ -6,6 +6,7 @@ const valid = {
   NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'publishable-placeholder',
   SUPABASE_SERVICE_ROLE_KEY: 'service-placeholder',
+  SESSION_SIGNING_SECRET: 'a-test-secret-that-is-at-least-32-chars',
 };
 
 describe('serverEnvSchema', () => {
@@ -18,6 +19,15 @@ describe('serverEnvSchema', () => {
     const rest: Partial<typeof valid> = { ...valid };
     delete rest.SUPABASE_SERVICE_ROLE_KEY;
     expect(serverEnvSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects a missing or short session signing secret', () => {
+    const rest: Partial<typeof valid> = { ...valid };
+    delete rest.SESSION_SIGNING_SECRET;
+    expect(serverEnvSchema.safeParse(rest).success).toBe(false);
+    expect(serverEnvSchema.safeParse({ ...valid, SESSION_SIGNING_SECRET: 'short' }).success).toBe(
+      false,
+    );
   });
 
   it('rejects a URL that is not a URL and an empty key', () => {

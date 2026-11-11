@@ -9,3 +9,4 @@ export {
   requireModuleAdmin,
 } from './guards';
 export type { SessionContext, Membership, RoleAssignment } from './context';
+export { redirectIfMfaPending } from './mfa-server';

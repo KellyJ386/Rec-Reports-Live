@@ -42,3 +42,23 @@ minimum_password_length = 12
 enable_signup = true
 # A password change needs a recent sign-in or reauthentication.
 secure_password_change = true
+
+# Two-step sign-in (TOTP). Required in the app for admin-tier access (the database ignores
+# admin access on a session that is not aal2); optional for everyone else. Hosted project:
+# Dashboard > Authentication > Multi-Factor must have "TOTP" enrol AND verify turned on.
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+# Email links go to the app's own /auth/confirm page, which verifies the token only when the
+# person presses a button (so link scanners cannot use it up). The default templates link to
+# Supabase's own /verify endpoint instead, which would skip that page. Hosted project:
+# paste the same content into Dashboard > Authentication > Email Templates (Invite user and
+# Reset password) and set Site URL to the production URL.
+[auth.email.template.invite]
+subject = "Your Rec Reports invite"
+content_path = "./supabase/templates/invite.html"
+
+[auth.email.template.recovery]
+subject = "Reset your Rec Reports password"
+content_path = "./supabase/templates/recovery.html"

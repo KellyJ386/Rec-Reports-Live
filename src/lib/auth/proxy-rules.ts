@@ -4,6 +4,7 @@ export function proxyRedirect(pathname: string, search: string, signedIn: boolea
   if (inApp && !signedIn) {
     return `/sign-in?next=${encodeURIComponent(pathname + search)}`;
   }
+  if (pathname === '/sign-in/verify' && !signedIn) return '/sign-in';
   if (pathname === '/sign-in' && signedIn) return '/app';
   return null;
 }

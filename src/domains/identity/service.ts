@@ -221,6 +221,43 @@ export async function getAccountStatus(
   return ok(data.disabled_at ? 'disabled' : 'active');
 }
 
+/**
+ * Whether the caller may create a login for this person, asked of the database
+ * (can_manage_person_account) through the caller's own session. False on any error.
+ */
+export async function canManagePersonAccount(orgId: string, personId: string): Promise<boolean> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc('can_manage_person_account', {
+    p_organization_id: orgId,
+    p_person_id: personId,
+  });
+  if (error) {
+    console.error('identity: can_manage_person_account failed', error.code ?? '');
+    return false;
+  }
+  return data === true;
+}
+
+/**
+ * Turns a person's login off or on (accounts.disabled_at). Through the caller's session, so
+ * RLS enforces the tier rule; a refusal shows up as zero rows changed.
+ */
+export async function setAccountDisabled(
+  orgId: string,
+  personId: string,
+  disabled: boolean,
+): Promise<Result<number>> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('accounts')
+    .update({ disabled_at: disabled ? new Date().toISOString() : null })
+    .eq('organization_id', orgId)
+    .eq('person_id', personId)
+    .select('id');
+  if (error) return failure(error);
+  return requireChanged(data);
+}
+
 // ---- roles ----
 
 /** System roles plus this organization's custom roles. */

@@ -7,7 +7,12 @@ import 'server-only';
 import { cache } from 'react';
 import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { getActiveOrganization, getSessionContext, requireOrgMember } from '@/lib/auth';
+import {
+  getActiveOrganization,
+  getSessionContext,
+  redirectIfMfaPending,
+  requireOrgMember,
+} from '@/lib/auth';
 import type { PermissionLevel } from '@/domains/identity';
 import { listAllLocations, type Location } from '@/domains/organizations';
 
@@ -104,6 +109,9 @@ export type AdminContext = { orgId: string; orgName: string; access: AdminAccess
  * membership, and the access flags. Pass `area` to answer 404 unless that flag is true.
  */
 export async function requireAdminArea(area?: keyof AdminAccess): Promise<AdminContext> {
+  // An admin whose session is not aal2 has no active organization as far as the database is
+  // concerned: send them to the code or set-up screen, not to /app or a 404.
+  await redirectIfMfaPending();
   const active = await getActiveOrganization();
   if (!active) redirect('/app');
   await requireOrgMember(active.organizationId);

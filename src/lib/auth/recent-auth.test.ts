@@ -5,7 +5,7 @@ const NOW = 1_800_000_000;
 
 describe('hasRecentAuthentication', () => {
   it('accepts a fresh recovery, otp, magiclink or password entry', () => {
-    for (const method of ['recovery', 'otp', 'magiclink', 'password']) {
+    for (const method of ['recovery', 'otp', 'magiclink', 'password', 'invite', 'email/signup']) {
       expect(hasRecentAuthentication({ amr: [{ method, timestamp: NOW - 30 }] }, NOW), method).toBe(
         true,
       );

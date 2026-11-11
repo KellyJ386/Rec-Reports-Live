@@ -19,6 +19,22 @@ export const signInSchema = z.object({
   next: z.string().max(2048).optional(),
 });
 
+/** The 6-digit code from an authenticator app. Spaces and dashes people type are ignored. */
+export const totpCodeSchema = z
+  .string()
+  .transform((v) => v.replace(/[\s-]/g, ''))
+  .pipe(z.string().regex(/^\d{6}$/, 'Enter the 6-digit code from your app.'));
+
+export const verifyCodeSchema = z.object({
+  code: totpCodeSchema,
+  next: z.string().max(2048).optional(),
+});
+
+export const factorIdSchema = z.guid('That device could not be found.');
+
+export const confirmEnrollSchema = z.object({ factorId: factorIdSchema, code: totpCodeSchema });
+export const removeFactorSchema = z.object({ factorId: factorIdSchema, code: totpCodeSchema });
+
 export const forgotPasswordSchema = z.object({ email });
 
 export const resetPasswordSchema = z

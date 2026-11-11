@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { requireOrgMember } from '@/lib/auth/guards';
 import { requireUser } from '@/lib/auth/session';
+import { clearActivity } from '@/lib/auth/activity-server';
 import { ACTIVE_ORG_COOKIE } from '@/lib/auth/active-org';
 import { switchOrganizationSchema } from '@/lib/auth/schemas';
 
@@ -13,6 +14,7 @@ export async function signOut() {
   const supabase = await createClient();
   await supabase.auth.signOut();
   (await cookies()).delete(ACTIVE_ORG_COOKIE);
+  await clearActivity();
   redirect('/sign-in');
 }
 

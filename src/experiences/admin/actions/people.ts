@@ -5,7 +5,13 @@ import { revalidatePath } from 'next/cache';
 import { requireModulePermission } from '@/lib/auth';
 import { blankToNull } from '@/lib/text';
 import {
+  INVITE_NOT_ALLOWED_MESSAGE,
+  canManagePersonAccount,
   createPersonWithAssignment,
+  getAccountStatus,
+  getPerson,
+  inviteAccount,
+  setAccountDisabled,
   getRole,
   personCreateSchema,
   personUpdateSchema,
@@ -123,4 +129,67 @@ export async function restorePersonAction(
     revalidatePath(`/app/admin/people/${id}`);
   }
   return fromResult(formData, result, 'Restored.');
+}
+
+/**
+ * Send (or resend) the invite email for a person. Order matters: guard, then the database's own
+ * answer to "may I create a login for this person" through the caller's session, and only then
+ * the provisioning module, which holds the service-role client.
+ */
+export async function sendInviteAction(
+  _previous: AdminFormState,
+  formData: FormData,
+): Promise<AdminFormState> {
+  const orgId = await activeOrgId();
+  await requirePeopleAdmin(orgId);
+  const id = guid(formData, 'id');
+  if (!id) return bad(formData, BAD_ID);
+
+  const person = await getPerson(orgId, id);
+  if (!person.ok) return bad(formData, person.message);
+  if (!person.data) return bad(formData, BAD_ID);
+  if (person.data.archived_at) return bad(formData, 'Restore this person first.');
+  const email = person.data.email?.trim();
+  if (!email) return bad(formData, 'Add an email address first, then save.');
+
+  const account = await getAccountStatus(orgId, id);
+  if (!account.ok) return bad(formData, account.message);
+  if (account.data === 'disabled') return bad(formData, 'Turn the login on first.');
+
+  if (!(await canManagePersonAccount(orgId, id))) {
+    return bad(formData, INVITE_NOT_ALLOWED_MESSAGE);
+  }
+
+  const result = await inviteAccount({ organizationId: orgId, personId: id, email });
+  if (!result.ok) return bad(formData, result.message);
+  revalidatePath(`/app/admin/people/${id}`);
+  return good(
+    result.data === 'resent' ? `Invite sent again to ${email}.` : `Invite sent to ${email}.`,
+  );
+}
+
+async function setLogin(formData: FormData, disabled: boolean): Promise<AdminFormState> {
+  const orgId = await activeOrgId();
+  await requirePeopleAdmin(orgId);
+  const id = guid(formData, 'id');
+  if (!id) return bad(formData, BAD_ID);
+  if (disabled && !confirmed(formData)) return bad(formData, NOT_CONFIRMED);
+  // RLS applies the tier rule; a refusal comes back as "nothing changed".
+  const result = await setAccountDisabled(orgId, id, disabled);
+  if (result.ok) revalidatePath(`/app/admin/people/${id}`);
+  return fromResult(formData, result, disabled ? 'Login turned off.' : 'Login turned on.');
+}
+
+export async function disableLoginAction(
+  _previous: AdminFormState,
+  formData: FormData,
+): Promise<AdminFormState> {
+  return setLogin(formData, true);
+}
+
+export async function enableLoginAction(
+  _previous: AdminFormState,
+  formData: FormData,
+): Promise<AdminFormState> {
+  return setLogin(formData, false);
 }

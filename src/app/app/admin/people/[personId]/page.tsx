@@ -4,20 +4,70 @@ import { requireAdminArea } from '@/experiences/admin/access';
 import { ActionForm } from '@/experiences/admin/action-form';
 import {
   archivePersonAction,
+  disableLoginAction,
+  enableLoginAction,
   restorePersonAction,
+  sendInviteAction,
   updatePersonAction,
 } from '@/experiences/admin/actions/people';
 import { ConfirmAction } from '@/experiences/admin/confirm-action';
 import { PersonFields } from '@/experiences/admin/fields';
 import { guidParam } from '@/experiences/admin/page-params';
 import { ArchivedMark, ErrorMessage } from '@/experiences/admin/ui';
-import { displayName, getAccountStatus, getPerson } from '@/domains/identity';
+import { displayName, getAccountStatus, getPerson, inviteView } from '@/domains/identity';
 
 const ACCOUNT_TEXT = {
   active: 'Has a login account.',
   disabled: 'Has a login account, but it is turned off.',
   none: 'No login account yet.',
 } as const;
+
+function LoginActions({
+  personId,
+  email,
+  view,
+  name,
+}: {
+  personId: string;
+  email: string | null;
+  view: ReturnType<typeof inviteView>;
+  name: string;
+}) {
+  switch (view) {
+    case 'can_invite':
+      return (
+        <ActionForm action={sendInviteAction} submitLabel="Send invite">
+          <input type="hidden" name="id" value={personId} />
+          <p>We will email {email} a link to choose a password.</p>
+        </ActionForm>
+      );
+    case 'no_email':
+      return <p>Add an email address under Details to send an invite.</p>;
+    case 'can_resend':
+      return (
+        <>
+          <ActionForm action={sendInviteAction} submitLabel="Resend invite">
+            <input type="hidden" name="id" value={personId} />
+            <p>Sends the link again. It only works until they have accepted.</p>
+          </ActionForm>
+          <ConfirmAction
+            action={disableLoginAction}
+            label="Disable login"
+            question={`Yes, turn off ${name}'s login`}
+            fields={{ id: personId }}
+          />
+        </>
+      );
+    case 'disabled':
+      return (
+        <ActionForm action={enableLoginAction} submitLabel="Enable login">
+          <input type="hidden" name="id" value={personId} />
+        </ActionForm>
+      );
+    default:
+      return null;
+  }
+}
 
 export default async function PersonPage({ params }: { params: Promise<{ personId: string }> }) {
   const personId = guidParam((await params).personId);
@@ -50,7 +100,18 @@ export default async function PersonPage({ params }: { params: Promise<{ personI
           ) : (
             <ErrorMessage message={account.message} />
           )}
-          <p>Inviting people to sign in is not built yet. For now this is for information only.</p>
+          {account.ok ? (
+            <LoginActions
+              personId={p.id}
+              email={p.email}
+              view={inviteView({
+                archived: p.archived_at !== null,
+                email: p.email,
+                account: account.data,
+              })}
+              name={displayName(p)}
+            />
+          ) : null}
         </>
       ) : null}
 

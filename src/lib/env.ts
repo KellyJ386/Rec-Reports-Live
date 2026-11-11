@@ -41,6 +41,14 @@ export const serverEnvSchema = z.object({
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   CRON_SECRET: z.string().min(1).optional(),
+  /**
+   * Server secret that signs the idle-timeout cookie and keys the rate-limit hashes. At least
+   * 32 characters (for example `openssl rand -base64 48`). Rotating it signs out nobody but
+   * restarts the idle clock for non-admin users and signs idle admins out on their next request.
+   */
+  SESSION_SIGNING_SECRET: z
+    .string()
+    .min(32, 'SESSION_SIGNING_SECRET must be at least 32 characters'),
 });
 
 export const publicEnvSchema = serverEnvSchema.pick({
@@ -70,4 +78,14 @@ export function getServerEnv(): ServerEnv {
 /** The configured site origin. Server only. Throws when SITE_URL is missing or invalid. */
 export function getSiteUrl(): string {
   return siteUrlSchema.parse(process.env.SITE_URL);
+}
+
+export const sessionSecretSchema = serverEnvSchema.shape.SESSION_SIGNING_SECRET;
+
+/**
+ * Only the signing secret. The proxy and the rate limiter read this instead of getServerEnv()
+ * so they never touch the service-role key. Server only. Throws when missing or too short.
+ */
+export function getSessionSecret(): string {
+  return sessionSecretSchema.parse(process.env.SESSION_SIGNING_SECRET);
 }

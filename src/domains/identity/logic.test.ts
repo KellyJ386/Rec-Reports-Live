@@ -7,6 +7,11 @@ import {
   displayName,
   effectiveLevelKey,
   scopeProblem,
+  classifyInviteError,
+  inviteErrorMessage,
+  inviteView,
+  mayLinkInvitedUser,
+  reinviteDecision,
 } from './logic';
 
 const LOC_A = 'loc-a';
@@ -78,5 +83,81 @@ describe('levelExceeds', () => {
     expect(levelExceeds('edit', 'edit')).toBe(false);
     expect(levelExceeds('view', 'admin')).toBe(false);
     expect(levelExceeds('view', 'none')).toBe(true);
+  });
+});
+
+describe('inviteView', () => {
+  it('offers an invite only to unarchived people with an email and no account', () => {
+    expect(inviteView({ archived: false, email: 'a@b.co', account: 'none' })).toBe('can_invite');
+    expect(inviteView({ archived: false, email: null, account: 'none' })).toBe('no_email');
+    expect(inviteView({ archived: false, email: '  ', account: 'none' })).toBe('no_email');
+  });
+  it('offers resend for an active account and enable for a disabled one', () => {
+    expect(inviteView({ archived: false, email: 'a@b.co', account: 'active' })).toBe('can_resend');
+    expect(inviteView({ archived: false, email: null, account: 'disabled' })).toBe('disabled');
+  });
+  it('offers nothing for an archived person', () => {
+    expect(inviteView({ archived: true, email: 'a@b.co', account: 'none' })).toBe('archived');
+    expect(inviteView({ archived: true, email: 'a@b.co', account: 'active' })).toBe('archived');
+  });
+});
+
+describe('classifyInviteError and inviteErrorMessage', () => {
+  it('recognises an existing login and says to ask a platform admin', () => {
+    for (const code of ['email_exists', 'user_already_exists']) {
+      const kind = classifyInviteError({ code, status: 422 });
+      expect(kind).toBe('exists');
+      expect(inviteErrorMessage(kind)).toBe(
+        'That email already has a login. Ask a platform admin to link it.',
+      );
+    }
+  });
+  it('recognises rate limits and bad addresses', () => {
+    expect(classifyInviteError({ code: 'over_email_send_rate_limit' })).toBe('rate_limited');
+    expect(classifyInviteError({ status: 429 })).toBe('rate_limited');
+    expect(classifyInviteError({ code: 'email_address_invalid' })).toBe('invalid_email');
+  });
+  it('says unavailable for everything else and never echoes detail', () => {
+    expect(classifyInviteError(null)).toBe('unavailable');
+    expect(classifyInviteError({ code: 'unexpected_failure', status: 500 })).toBe('unavailable');
+    expect(inviteErrorMessage('unavailable')).not.toMatch(/unexpected/);
+  });
+});
+
+describe('reinviteDecision', () => {
+  const base = {
+    authEmail: 'A@B.co',
+    personEmail: 'a@b.co',
+    confirmedAt: null,
+    lastSignInAt: null,
+  };
+  it('allows an unaccepted invite to the same address, ignoring case', () => {
+    expect(reinviteDecision(base)).toBe('ok');
+  });
+  it('refuses once accepted or signed in', () => {
+    expect(reinviteDecision({ ...base, confirmedAt: '2027-01-01T00:00:00Z' })).toBe('accepted');
+    expect(reinviteDecision({ ...base, lastSignInAt: '2027-01-01T00:00:00Z' })).toBe('accepted');
+  });
+  it('refuses when the person email no longer matches the auth user', () => {
+    expect(reinviteDecision({ ...base, personEmail: 'new@b.co' })).toBe('email_changed');
+    expect(reinviteDecision({ ...base, authEmail: null })).toBe('email_changed');
+  });
+});
+
+describe('mayLinkInvitedUser', () => {
+  const P = '11111111-1111-4111-8111-111111111111';
+  const OTHER = '22222222-2222-4222-8222-222222222222';
+  const base = { confirmedAt: null, lastSignInAt: null, linkedAccountPersonIds: [], personId: P };
+  it('links a brand-new unconfirmed user, and a retry that already points at this person', () => {
+    expect(mayLinkInvitedUser(base)).toBe(true);
+    expect(mayLinkInvitedUser({ ...base, linkedAccountPersonIds: [P] })).toBe(true);
+  });
+  it('never links a confirmed or signed-in user (account takeover)', () => {
+    expect(mayLinkInvitedUser({ ...base, confirmedAt: '2027-01-01T00:00:00Z' })).toBe(false);
+    expect(mayLinkInvitedUser({ ...base, lastSignInAt: '2027-01-01T00:00:00Z' })).toBe(false);
+  });
+  it('never links a user that already belongs to another person', () => {
+    expect(mayLinkInvitedUser({ ...base, linkedAccountPersonIds: [OTHER] })).toBe(false);
+    expect(mayLinkInvitedUser({ ...base, linkedAccountPersonIds: [P, OTHER] })).toBe(false);
   });
 });

@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { isAdminTier } from './admin-tier';
+import type { Aal, MfaStep } from './mfa';
 
 const id = z.guid();
 
@@ -46,6 +48,14 @@ export type SessionContext = {
   userId: string;
   email: string | null;
   isPlatformAdmin: boolean;
+  /** The session's assurance level from the verified JWT; null if absent. */
+  aal: Aal | null;
+  /** The database says this session holds admin-tier access it is ignoring (not aal2). */
+  needsMfa: boolean;
+  /** Which second-step screen is still owed (code or set-up), or 'none'. */
+  mfaStep: MfaStep;
+  /** Holds admin-tier access (rank >= 80): two-step sign-in and 30-minute idle sign-out apply. */
+  adminTier: boolean;
   memberships: Membership[];
   roleAssignments: RoleAssignment[];
 };
@@ -53,6 +63,9 @@ export type SessionContext = {
 export type ContextRows = {
   user: { id: string; email: string | null };
   isPlatformAdmin: boolean;
+  aal: Aal | null;
+  needsMfa: boolean;
+  mfaStep: MfaStep;
   /** Result of public.auth_org_ids(): the database's own list of member organizations. */
   memberOrgIds: readonly string[];
   organizations: readonly z.infer<typeof orgRowSchema>[];
@@ -119,6 +132,14 @@ export function buildSessionContext(rows: ContextRows): SessionContext {
     userId: rows.user.id,
     email: rows.user.email,
     isPlatformAdmin: rows.isPlatformAdmin,
+    aal: rows.aal,
+    needsMfa: rows.needsMfa,
+    mfaStep: rows.mfaStep,
+    adminTier: isAdminTier({
+      needsMfa: rows.needsMfa,
+      isPlatformAdmin: rows.isPlatformAdmin,
+      ranks: roleAssignments.map((a) => a.rank),
+    }),
     memberships,
     roleAssignments,
   };

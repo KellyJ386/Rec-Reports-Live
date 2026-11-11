@@ -16,6 +16,9 @@ const L2 = '40000000-0000-4000-8000-000000000002';
 const base: ContextRows = {
   user: { id: 'u', email: 'a@b.co' },
   isPlatformAdmin: false,
+  aal: 'aal2',
+  needsMfa: false,
+  mfaStep: 'none',
   memberOrgIds: [O1, O2],
   organizations: [
     { id: O2, name: 'Zed Rec' },
@@ -80,5 +83,31 @@ describe('buildSessionContext', () => {
     expect(pa.memberships).toEqual([
       { organizationId: O3, organizationName: 'Not mine', personId: null },
     ]);
+  });
+});
+
+describe('buildSessionContext: second step and admin tier', () => {
+  it('passes the aal, needsMfa and step through', () => {
+    const ctx = buildSessionContext({ ...base, aal: 'aal1', needsMfa: true, mfaStep: 'verify' });
+    expect([ctx.aal, ctx.needsMfa, ctx.mfaStep]).toEqual(['aal1', true, 'verify']);
+  });
+  it('marks an org admin (rank 90) as admin tier and a staff-only user as not', () => {
+    expect(buildSessionContext(base).adminTier).toBe(true);
+    const staffOnly = buildSessionContext({
+      ...base,
+      assignments: base.assignments.filter((a) => a.role_id === STAFF),
+    });
+    expect(staffOnly.adminTier).toBe(false);
+  });
+  it('counts a session the database is ignoring as admin tier, even with no visible roles', () => {
+    const ignored = buildSessionContext({
+      ...base,
+      aal: 'aal1',
+      needsMfa: true,
+      memberOrgIds: [],
+      assignments: [],
+    });
+    expect(ignored.adminTier).toBe(true);
+    expect(ignored.memberships).toEqual([]);
   });
 });

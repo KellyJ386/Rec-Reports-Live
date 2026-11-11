@@ -1,9 +1,10 @@
 import 'server-only';
 import { cache } from 'react';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getSessionContext } from './session';
 import type { Membership } from './context';
+import { mfaStepPath } from './mfa';
 import {
   guidSchema,
   moduleKeySchema,
@@ -18,6 +19,12 @@ import {
  * org/location/module?"), never an identity or a claim. A malformed argument,
  * an RPC error or a "false" all deny (fail closed) with notFound(), which does
  * not reveal whether the organization exists.
+ *
+ * Two-step sign-in: the database ignores admin-tier access (and a voluntary factor is not yet
+ * proven) until the session is aal2. When that is why a person has no access, refusing with
+ * a 404 would be a dead end, so requireOrgMember (which every other guard calls first)
+ * redirects to the second step instead: /sign-in/verify with a verified factor, /app/security
+ * to set one up. This runs before any membership lookup, so it reveals nothing about orgs.
  */
 
 const hasRole = cache(
@@ -66,6 +73,8 @@ function validGuid(value: string | null | undefined): value is string {
 export async function requireOrgMember(orgId: string): Promise<Membership> {
   if (!validGuid(orgId)) notFound();
   const ctx = await getSessionContext();
+  const secondStep = mfaStepPath(ctx.mfaStep);
+  if (secondStep) redirect(secondStep);
   const membership = ctx.memberships.find((m) => m.organizationId === orgId);
   if (!membership) notFound();
   return membership;
