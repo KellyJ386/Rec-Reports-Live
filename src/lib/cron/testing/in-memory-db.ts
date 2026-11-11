@@ -390,6 +390,13 @@ export class InMemoryDb
     return (this.noticeAudience.get(noticeId) ?? []).filter((p) => this.activeMembers.has(p));
   }
 
+  /** Event id -> rows worker_message_recipients_for_event would return. */
+  readonly messageRecipientRows = new Map<string, { personId: string; linkPath: string }[]>();
+
+  async messageRecipients(eventId: string) {
+    return this.messageRecipientRows.get(eventId) ?? [];
+  }
+
   async taskRecipientPersonIds(taskId: string): Promise<string[]> {
     return this.taskRecipients.get(taskId) ?? [];
   }

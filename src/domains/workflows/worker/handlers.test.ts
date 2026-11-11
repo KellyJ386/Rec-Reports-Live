@@ -123,32 +123,53 @@ describe('task notify handlers', () => {
     expect(db.notifications.size).toBe(0);
   });
 
-  it('task.overdue tells the people escalate_overdue_task names, at high urgency, once', async () => {
+  const overdue = (db: InMemoryDb) =>
+    createOverdueNotifyHandler({ tasks: db, workflows: db, notifier: db });
+
+  it('task.overdue tells the staff assignee and the managers, once, with a neutral text', async () => {
     const { db, alice, bob } = setup();
     const late = db.addTask({ id: fakeId(), title: 'Fix door' }, [alice]);
     db.escalationRecipients.set(late.id, [bob]); // the manager, not the assignee
-    const h = createOverdueNotifyHandler({ tasks: db, workflows: db, notifier: db });
     const id = db.emit('task.overdue', late.id);
-    await h.run(asEvent(db, id), NO_DEADLINE);
-    await h.run(asEvent(db, id), NO_DEADLINE);
+    await overdue(db).run(asEvent(db, id), NO_DEADLINE);
+    await overdue(db).run(asEvent(db, id), NO_DEADLINE); // retry: nothing new
     const made = [...db.notifications.values()];
-    expect(made).toHaveLength(1);
-    expect(made[0]).toMatchObject({
-      personId: bob,
-      kind: 'task_overdue',
-      urgency: 'high',
-      title: 'Overdue: Fix door',
-    });
+    expect(made.map((n) => n.personId).sort()).toEqual([alice, bob].sort());
+    for (const n of made) {
+      expect(n).toMatchObject({
+        kind: 'task_overdue',
+        urgency: 'high',
+        title: 'Task overdue: Fix door',
+        body: null,
+        sourceEventId: id,
+      });
+    }
   });
 
-  it('task.overdue sends nothing when the database names nobody or the task is closed', async () => {
+  it('the assignee still gets it when escalation returns nobody', async () => {
     const { db, alice } = setup();
-    const quiet = db.addTask({ id: fakeId() }, [alice]); // assignee acted: no recipients
+    const late = db.addTask({ id: fakeId() }, [alice]);
+    await overdue(db).run(asEvent(db, db.emit('task.overdue', late.id)), NO_DEADLINE);
+    expect([...db.notifications.values()].map((n) => n.personId)).toEqual([alice]);
+  });
+
+  it('a manager who is also the assignee gets one notification, not two', async () => {
+    const { db, alice, bob } = setup();
+    const late = db.addTask({ id: fakeId() }, [alice, bob]);
+    db.escalationRecipients.set(late.id, [alice]);
+    await overdue(db).run(asEvent(db, db.emit('task.overdue', late.id)), NO_DEADLINE);
+    const made = [...db.notifications.values()];
+    expect(made).toHaveLength(2);
+    expect(made.filter((n) => n.personId === alice)).toHaveLength(1);
+  });
+
+  it('task.overdue sends nothing for a closed task or one nobody is on', async () => {
+    const { db, alice } = setup();
+    const nobody = db.addTask({ id: fakeId() }, []);
     const fixed = db.addTask({ id: fakeId(), status: 'cancelled' }, [alice]);
     db.escalationRecipients.set(fixed.id, [alice]);
-    const h = createOverdueNotifyHandler({ tasks: db, workflows: db, notifier: db });
-    await h.run(asEvent(db, db.emit('task.overdue', quiet.id)), NO_DEADLINE);
-    await h.run(asEvent(db, db.emit('task.overdue', fixed.id)), NO_DEADLINE);
+    await overdue(db).run(asEvent(db, db.emit('task.overdue', nobody.id)), NO_DEADLINE);
+    await overdue(db).run(asEvent(db, db.emit('task.overdue', fixed.id)), NO_DEADLINE);
     expect(db.notifications.size).toBe(0);
   });
 

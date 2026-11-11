@@ -96,29 +96,42 @@ describe('notice.published handler', () => {
 });
 
 describe('message.sent handler', () => {
-  it('notifies each recipient once with no sender and no content', async () => {
+  it('notifies each recipient once, with generic text and the link the database gives', async () => {
     const db = new InMemoryDb();
-    const [a, b, sender] = [fakeId(), fakeId(), fakeId()];
-    [a, b, sender].forEach((p) => db.addMember(p));
-    const id = db.emit('message.sent', fakeId(), {
-      sender_person_id: sender,
-      recipient_person_ids: [a, b, a, sender, 'not-a-uuid', 42],
-    });
+    const [a, b] = [fakeId(), fakeId()];
+    [a, b].forEach((p) => db.addMember(p));
+    const mid = fakeId();
+    const id = db.emit('message.sent', mid, { message_id: mid });
+    const link = `/app/messages/${mid}`;
+    db.messageRecipientRows.set(id, [
+      { personId: a, linkPath: link },
+      { personId: b, linkPath: link },
+      { personId: a, linkPath: link },
+    ]);
     const h = createMessageNotifyHandler({ notifier: db });
     await h.run(asEvent(db, id), NO_DEADLINE);
-    await h.run(asEvent(db, id), NO_DEADLINE);
+    await h.run(asEvent(db, id), NO_DEADLINE); // retry: no duplicates
     const made = [...db.notifications.values()];
     expect(made.map((n) => n.personId).sort()).toEqual([a, b].sort());
-    expect(made.every((n) => n.title === 'New message' && n.body === null)).toBe(true);
+    expect(
+      made.every(
+        (n) =>
+          n.kind === 'message_received' &&
+          n.title === 'You have a new message' &&
+          n.body === null &&
+          n.linkPath === link,
+      ),
+    ).toBe(true);
   });
 
-  it('does nothing when the payload has no recipient list', async () => {
+  it('does nothing when the database names nobody (and ignores any payload list)', async () => {
     const db = new InMemoryDb();
-    await createMessageNotifyHandler({ notifier: db }).run(
-      asEvent(db, db.emit('message.sent', fakeId())),
-      NO_DEADLINE,
-    );
+    const p = fakeId();
+    db.addMember(p);
+    const id = db.emit('message.sent', fakeId(), { recipient_person_ids: [p] });
+    await createMessageNotifyHandler({ notifier: db }).run(asEvent(db, id), NO_DEADLINE);
     expect(db.notifications.size).toBe(0);
+    expect(db.calls.createNotifications).toBe(0);
   });
 });
 

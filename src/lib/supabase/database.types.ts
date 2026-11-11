@@ -2186,6 +2186,10 @@ export type Database = {
         Args: { p_organization_id: string; p_person_id: string }
         Returns: boolean
       }
+      worker_message_recipients_for_event: {
+        Args: { p_event_id: string }
+        Returns: { organization_id: string; message_id: string; person_id: string; link_path: string }[]
+      }
     }
     Enums: {
       permission_level: "none" | "view" | "edit" | "admin"

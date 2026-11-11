@@ -85,12 +85,14 @@ export function createTaskNotifyHandler(
 }
 
 /**
- * task.overdue -> tell the people `escalate_overdue_task` names (the managers at the task's
- * location), at "high" urgency. The database decides: it returns nobody when the assignee has
- * already acted or the task is closed, and it records the escalation once per event, so a re-run
- * gets the same people and `create_notifications` skips the ones already told. Further escalation
- * is for workflow rules: `task.overdue` is a rule trigger, so a manager can add a rule that
- * creates a follow-up task (the generic rules handler runs first for this event type).
+ * task.overdue -> tell the people the task is for AND the managers. Recipients are the union of
+ * `escalate_overdue_task` (the managers at the task's location; it also records the escalation,
+ * once per event) and `task_recipient_person_ids` (the current assignee, or the active holders of
+ * the job title it is routed to). Everyone gets the same notification kind for the same event, so
+ * a manager who is also the assignee gets one notice, and the text is neutral: it says the task
+ * is overdue and nothing about who is to blame. A re-run gets the same people and
+ * `create_notifications` skips the ones already told. Further escalation is for workflow rules:
+ * `task.overdue` is a rule trigger, so a manager can add a rule that creates a follow-up task.
  */
 export function createOverdueNotifyHandler(deps: {
   tasks: TaskReader;
@@ -100,20 +102,19 @@ export function createOverdueNotifyHandler(deps: {
   return {
     name: HANDLER_NAMES.notifyTaskOverdue,
     async run(event: OutboxEvent, ctx: HandlerContext) {
-      const recipients = await deps.workflows.escalateOverdue(event.id);
-      if (recipients.length === 0) return;
+      const escalated = await deps.workflows.escalateOverdue(event.id);
       const task = await deps.tasks.getTaskForEvent(event.id);
       if (!task || CLOSED.has(task.status)) return;
+      const assigned = await deps.notifier.taskRecipientPersonIds(task.id);
+      const recipients = [...new Set([...escalated, ...assigned])];
       for (const personIds of chunk(recipients, NOTIFY_CHUNK)) {
         await ctx.checkpoint();
         await deps.notifier.createNotifications({
           eventId: event.id,
           personIds,
           kind: 'task_overdue',
-          title: clip(`Overdue: ${task.title}`, 120),
-          body: task.assignedPersonId
-            ? 'The person it is assigned to has not started it.'
-            : 'Nobody has picked this task up.',
+          title: clip(`Task overdue: ${task.title}`, 120),
+          body: null,
           linkPath: taskLink(task.id),
           urgency: 'high',
         });

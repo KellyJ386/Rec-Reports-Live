@@ -1,4 +1,4 @@
-import { chunk, clip, isUuid } from '@/lib/cron/run-all';
+import { chunk, clip } from '@/lib/cron/run-all';
 import type { EventHandler, HandlerContext, OutboxEvent } from '@/lib/cron/outbox-types';
 import type { NoticeReader, NotificationPort } from './types';
 
@@ -13,6 +13,9 @@ export function noticeLink(noticeId: string): string {
   return `/app/notices/${noticeId}`;
 }
 export const MESSAGES_LINK = '/app/messages';
+/** Same underscore style as the other kinds (notice_published, task_created). The database accepts [a-z0-9_.]. */
+export const MESSAGE_NOTIFICATION_KIND = 'message_received';
+export const MESSAGE_NOTIFICATION_TITLE = 'You have a new message';
 
 /** People per create_notifications call. The database takes 10,000; small chunks keep each call short. */
 export const NOTIFY_CHUNK = 200;
@@ -54,33 +57,32 @@ export function createNoticeNotifyHandler(
 }
 
 /**
- * message.sent -> would notify the recipients, but cannot yet. Since migration 000600 the event
- * payload is `{message_id}` only and `message.*` events are hidden, and the database gives the
- * worker no function that returns a message's recipients. The handler therefore fans out only
- * when a payload still lists recipients (events written before that migration were scrubbed, so
- * in practice it does nothing). Reading `message_recipients` directly is not allowed: see the
- * "database gap" note in the report. The notification would never say who wrote the message or
- * what it said.
+ * message.sent -> one notification for each recipient `worker_message_recipients_for_event`
+ * returns (active members who received it, never the sender), with the link it gives. The text is
+ * generic on purpose: no sender, no subject, no body, so message content never reaches
+ * notifications, email or push. Done in chunks with a checkpoint before each; re-runs create
+ * nothing new.
  */
 export function createMessageNotifyHandler(deps: { notifier: NotificationPort }): EventHandler {
   return {
     name: COMMUNICATIONS_HANDLER_NAMES.notifyMessageRecipients,
     async run(event: OutboxEvent, ctx: HandlerContext) {
-      const raw = event.payload.recipient_person_ids;
-      const sender = event.payload.sender_person_id;
-      const ids = Array.isArray(raw) ? raw.filter(isUuid) : [];
-      const recipients = [...new Set(ids)].filter((id) => id !== sender);
-      for (const personIds of chunk(recipients, NOTIFY_CHUNK)) {
-        await ctx.checkpoint();
-        await deps.notifier.createNotifications({
-          eventId: event.id,
-          personIds,
-          kind: 'message_received',
-          title: 'New message',
-          body: null,
-          linkPath: MESSAGES_LINK,
-          urgency: 'normal',
-        });
+      const rows = await deps.notifier.messageRecipients(event.id);
+      const byLink = new Map<string, string[]>();
+      for (const r of rows) byLink.set(r.linkPath, [...(byLink.get(r.linkPath) ?? []), r.personId]);
+      for (const [linkPath, people] of byLink) {
+        for (const personIds of chunk([...new Set(people)], NOTIFY_CHUNK)) {
+          await ctx.checkpoint();
+          await deps.notifier.createNotifications({
+            eventId: event.id,
+            personIds,
+            kind: MESSAGE_NOTIFICATION_KIND,
+            title: MESSAGE_NOTIFICATION_TITLE,
+            body: null,
+            linkPath,
+            urgency: 'normal',
+          });
+        }
       }
     },
   };

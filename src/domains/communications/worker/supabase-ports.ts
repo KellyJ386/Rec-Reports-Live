@@ -46,6 +46,13 @@ export function createNotificationPort(client: Client): NotificationPort {
       if (error) throw new PortError('notice_audience_person_ids', error.code);
       return data ?? [];
     },
+    async messageRecipients(eventId) {
+      const { data, error } = await client.rpc('worker_message_recipients_for_event', {
+        p_event_id: eventId,
+      });
+      if (error) throw new PortError('worker_message_recipients_for_event', error.code);
+      return (data ?? []).map((r) => ({ personId: r.person_id, linkPath: r.link_path }));
+    },
     async taskRecipientPersonIds(taskId) {
       const { data, error } = await client.rpc('task_recipient_person_ids', { p_task_id: taskId });
       if (error) throw new PortError('task_recipient_person_ids', error.code);

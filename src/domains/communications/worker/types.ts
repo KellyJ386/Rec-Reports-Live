@@ -27,6 +27,16 @@ export interface NotificationPort {
   noticeAudiencePersonIds(noticeId: string): Promise<string[]>;
   /** The assignee, or the holders of the job title the task is routed to. */
   taskRecipientPersonIds(taskId: string): Promise<string[]>;
+  /**
+   * worker_message_recipients_for_event: who to tell about a message.sent event (active members
+   * who received it, never the sender) with the app link. No content, no sender.
+   */
+  messageRecipients(eventId: string): Promise<MessageRecipient[]>;
+}
+
+export interface MessageRecipient {
+  personId: string;
+  linkPath: string;
 }
 
 export interface NoticeSnapshot {
