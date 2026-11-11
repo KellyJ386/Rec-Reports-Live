@@ -5,7 +5,7 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(196 + 18 * (select count(*)::int from pg_class c
+select plan(204 + 18 * (select count(*)::int from pg_class c
   where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p') and (c.relname = 'organizations'
     or exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'organization_id' and not a.attisdropped))));
 
@@ -646,6 +646,10 @@ insert into cases values
   (62, 'remove_availability',          $$public.remove_availability(pg_temp.id('avail_m'))$$, '^ERR 42501$', '^$'),
   (63, 'request_time_off',             $$public.request_time_off(pg_temp.id('org_a'), current_date + 60, current_date + 61)$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
   (64, 'cancel_time_off',              $$public.cancel_time_off(pg_temp.id('to_m'))$$, '^ERR 42501$', '^$'),
+  (66, 'shift_overrides',              $$(select count(*) from public.shift_overrides(pg_temp.id('sched_a')))$$, '^ERR 42501$', '^[0-9]+$'),
+  (67, 'swap_candidates',              $$(select count(*) from public.swap_candidates(pg_temp.id('sm_x')))$$, '^ERR 42501$', '^[0-9]+$'),
+  (68, 'position_shifts_missing_qualification', $$public.position_shifts_missing_qualification(pg_temp.id('pos_m'))$$, '^ERR 42501$', '^[0-9]+$'),
+  (69, 'set_staffing_switches',        $$public.set_staffing_switches(pg_temp.id('org_a'), null, null)$$, '^ERR 42501$', '^$'),
   (65, 'decide_time_off',              $$public.decide_time_off((select id from public.time_off_requests where person_id = pg_temp.id('p_staff_a1')), true)$$, '^ERR 42501$', '^$');
 
 -- Every function a signed-in user can call through /rpc is in the table above (a new one must be added on purpose).
@@ -660,7 +664,7 @@ select is((select coalesce(string_agg(c.fn, ', '), '') from cases c
 
 select pg_temp.act_as('u_orgadmin_a', 'aal1');
 select matches(pg_temp.val(c.expr), c.e1, 'org admin A at aal1: ' || c.fn || ' -> ' || c.e1)
-  from (select * from cases where n not in (53, 64) order by n offset 0) c;
+  from (select * from cases order by n offset 0) c;
 select pg_temp.act_as('postgres');
 -- No call at aal1 changed anything (the same notification is still unread, the task untouched).
 select is((select count(*) from public.notifications where id in (pg_temp.id('notif_oa1'), pg_temp.id('notif_oa2')) and read_at is null), 2::bigint, 'the aal1 attempts marked nothing read');
@@ -668,18 +672,8 @@ select is((select status from public.tasks where id = pg_temp.id('task_a')), 'op
 select is((select status from public.notices where id = pg_temp.id('notice_a')), 'draft', 'the aal1 attempts left the notice a draft');
 select is((select status from public.outbox_events where id = pg_temp.id('ev_a')), 'dead', 'the aal1 attempts left the dead event dead');
 select is((select count(*) from public.people where organization_id = pg_temp.id('org_a') and first_name = 'Nia'), 0::bigint, 'the aal1 attempts created no person');
--- cancel_shift_swap and cancel_time_off judge the caller by "is this my own row" (current_person_id), not by the aal1 rule, so an
--- admin-tier session that has not passed the second step can still cancel its own swap or time off. Everything else above is refused.
-insert into public.shifts (id, organization_id, location_id, schedule_id, position_id, starts_at, ends_at, assigned_person_id)
-values (pg_temp.id('sm_t'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), pg_temp.id('sched_a'), pg_temp.id('pos_m'), timestamptz '2030-01-10 12:00-05', timestamptz '2030-01-10 13:00-05', pg_temp.id('p_orgadmin_a'));
-insert into public.shift_swaps (id, organization_id, location_id, kind, shift_id, from_person_id, to_person_id)
-values (pg_temp.id('swap_t1'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'swap', pg_temp.id('sm_t'), pg_temp.id('p_orgadmin_a'), pg_temp.id('p_staff_a1'));
-insert into public.time_off_requests (id, organization_id, person_id, starts_on, ends_on) values (pg_temp.id('to_t1'), pg_temp.id('org_a'), pg_temp.id('p_orgadmin_a'), current_date + 120, current_date + 121);
-select pg_temp.act_as('u_orgadmin_a', 'aal1');
-select todo_start('known gap: own-row cancels do not check the aal1 rule (see the final report)');
-select is(pg_temp.val($$public.cancel_shift_swap(pg_temp.id('swap_t1'))$$), 'ERR 42501', 'org admin A at aal1: cancel_shift_swap on their own swap is refused');
-select is(pg_temp.val($$public.cancel_time_off(pg_temp.id('to_t1'))$$), 'ERR 42501', 'org admin A at aal1: cancel_time_off on their own request is refused');
-select todo_end();
+-- (cancel_shift_swap, cancel_time_off and cancel_shift_claim are refused at aal1 like everything else: 20261113000200 M5 made them
+-- require real membership under the MFA rules; they are rows 53, 59 and 64 of the matrix.)
 select pg_temp.act_as('postgres');
 
 select pg_temp.act_as('u_orgadmin_a', 'aal2');

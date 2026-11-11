@@ -2,7 +2,7 @@
 
 An operations platform for recreation facilities: communications, tasks, checklists, incidents, and the facility and staff schedules, built for multi-facility organizations.
 
-Status: Phases 1 (platform foundation) and 2 (events, tasks, notices, messages, notifications) are built and tested locally only; see the open items in [CLAUDE.md](CLAUDE.md). Phase 3 is next ([docs/ROADMAP.md](docs/ROADMAP.md)).
+Status: Phases 1 (platform foundation), 2 (events, tasks, notices, messages, notifications) and 3 (staff scheduling) are built. The checks pass in CI on a Supabase stack, but nothing has run on the hosted Supabase project or as a working Vercel app yet; see the open items in [CLAUDE.md](CLAUDE.md). Phase 4 is next ([docs/ROADMAP.md](docs/ROADMAP.md)).
 
 Start with [CLAUDE.md](CLAUDE.md), then [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 

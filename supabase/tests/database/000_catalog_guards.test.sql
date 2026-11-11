@@ -304,7 +304,9 @@ select is((select coalesce(string_agg(sig, ', ' order by sig), '') from gf
                                  'assign_shift', 'cancel_shift', 'cancel_shift_claim', 'cancel_shift_swap', 'cancel_time_off', 'create_schedule',
                                  'create_shift', 'decide_shift_claim', 'decide_shift_swap', 'decide_time_off', 'my_claimable_shifts', 'publish_schedule',
                                  'remove_availability', 'remove_person_qualification', 'remove_shift_template_item', 'request_shift_claim', 'request_shift_drop', 'request_shift_swap',
-                                 'request_time_off', 'respond_shift_swap', 'save_position', 'save_qualification', 'save_shift_template', 'set_person_qualification', 'update_shift')),
+                                 'request_time_off', 'respond_shift_swap', 'save_position', 'save_qualification', 'save_shift_template', 'set_person_qualification', 'update_shift',
+                                 -- review fixes (20261113000200)
+                                 'shift_overrides', 'swap_candidates', 'position_shifts_missing_qualification', 'set_staffing_switches')),
   '', 'only the reviewed SECURITY DEFINER functions in public are callable by authenticated through /rpc (add new ones here on purpose)');
 
 select is((select coalesce(string_agg(x, ', '), '') from unnest(array[
@@ -323,7 +325,9 @@ select is((select coalesce(string_agg(x, ', '), '') from unnest(array[
              'assign_shift', 'cancel_shift', 'cancel_shift_claim', 'cancel_shift_swap', 'cancel_time_off', 'create_schedule',
              'create_shift', 'decide_shift_claim', 'decide_shift_swap', 'decide_time_off', 'my_claimable_shifts', 'publish_schedule',
              'remove_availability', 'remove_person_qualification', 'remove_shift_template_item', 'request_shift_claim', 'request_shift_drop', 'request_shift_swap',
-             'request_time_off', 'respond_shift_swap', 'save_position', 'save_qualification', 'save_shift_template', 'set_person_qualification', 'update_shift']) x
+             'request_time_off', 'respond_shift_swap', 'save_position', 'save_qualification', 'save_shift_template', 'set_person_qualification', 'update_shift',
+                                 -- review fixes (20261113000200)
+                                 'shift_overrides', 'swap_candidates', 'position_shifts_missing_qualification', 'set_staffing_switches']) x
            where not exists (select 1 from gf where gf.nspname = 'public' and gf.proname = x and gf.prosecdef)),
   '', 'the /rpc allowlist has no stale entries');
 

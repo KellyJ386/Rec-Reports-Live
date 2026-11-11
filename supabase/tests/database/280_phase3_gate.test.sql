@@ -6,7 +6,7 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(59);
+select plan(60);
 
 -- Independent of supabase/seed.sql: clear the mock Phase 2 business rows a seeded database may hold, so counts below see only this file's rows.
 -- Triggers are skipped (replica role) so neither the audit log nor the append-only guards see the cleanup; children go first.
@@ -305,7 +305,8 @@ select is(pg_temp.fd(format('select public.request_shift_swap(%L, %L)', pg_temp.
 select pg_temp.act_as('u_manager_a1');
 select public.publish_schedule(pg_temp.gid('sched'));
 select pg_temp.act_as('postgres');
-select is(pg_temp.step(), array['schedule.published', 'shift.opened', 'shift.opened']::text[], 'step 2 (publish): one schedule.published and one shift.opened per open shift, nothing else');
+select is(pg_temp.step(), array['schedule.published']::text[], 'step 2 (publish): exactly one schedule.published (no shift.opened per open shift)');
+select is((select (payload ->> 'open_shift_count')::int from public.outbox_events where type = 'schedule.published'), 2, 'step 2: it says two shifts are open');
 select is((select status from public.schedules where id = pg_temp.gid('sched')), 'published', 'step 2: the week is published');
 select pg_temp.act_as('u_s2');
 select is((select count(*) from public.shifts), 6::bigint, 'step 2: staff A now sees the six shifts of the week');
@@ -383,9 +384,9 @@ select is(array[pg_temp.holder(0), pg_temp.holder(1), pg_temp.holder(2), pg_temp
 select is((select count(*) from public.shifts where schedule_id = pg_temp.gid('sched')), 6::bigint, 'final: still six shifts (nothing was created or lost along the way)');
 select is((select count(*) from public.shifts where override_kinds is not null), 0::bigint, 'final: no override was needed anywhere');
 select results_eq($$select type, count(*) from public.outbox_events group by type order by type collate "C"$$,
-  $$values ('schedule.published'::text, 1::bigint), ('shift.assigned', 2), ('shift.opened', 3), ('shift.unassigned', 2), ('shift.uncovered', 3),
+  $$values ('schedule.published'::text, 1::bigint), ('shift.assigned', 2), ('shift.opened', 1), ('shift.unassigned', 2), ('shift.uncovered', 3),
            ('shift_claim.approved', 1), ('shift_claim.requested', 1), ('shift_swap.accepted', 1), ('shift_swap.approved', 2), ('shift_swap.requested', 2)$$,
-  'final: the whole week wrote exactly these events (18), each action once');
+  'final: the whole week wrote exactly these events (16), each action once');
 select is((select count(*) from public.outbox_events where organization_id <> pg_temp.id('org_a')), 0::bigint, 'final: all of them belong to org A');
 select is((select count(*) from public.outbox_events e, jsonb_object_keys(e.payload) k where k in ('note', 'notes', 'reason', 'name', 'title')), 0::bigint, 'final: no free text in any payload');
 -- who is told (the worker reads), as the service connection

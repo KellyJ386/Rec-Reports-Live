@@ -4,7 +4,7 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(136);
+select plan(137);
 
 -- Independent of supabase/seed.sql: clear the mock Phase 2 business rows a seeded database may hold, so counts below see only this file's rows.
 -- Triggers are skipped (replica role) so neither the audit log nor the append-only guards see the cleanup; children go first.
@@ -474,13 +474,12 @@ select is(pg_temp.fd(format('select public.publish_schedule(%L)', pg_temp.gid('s
 select pg_temp.act_as('postgres');
 select results_eq($$select status, published_at is not null, published_by_person_id from public.schedules where id = pg_temp.gid('sched')$$, $$values ('published'::text, true, pg_temp.id('p_manager_a1'))$$, 'published, with when and by whom');
 select is((select count(*) from public.outbox_events where type = 'schedule.published' and entity_id = pg_temp.gid('sched')), 1::bigint, 'one schedule.published event');
-select is((select count(*) from public.outbox_events where type = 'shift.opened' and payload ->> 'via' = 'publish'), (select n_open from before_pub), 'and one shift.opened (via publish) for each open shift');
+select is((select count(*) from public.outbox_events where type = 'shift.opened'), 0::bigint, 'publishing announces no shift.opened (one event per schedule, not one per open shift: 20261113000200 M4)');
+select is((select (payload ->> 'open_shift_count')::int from public.outbox_events where type = 'schedule.published'), (select n_open from before_pub)::int, 'schedule.published carries the number of open shifts instead');
 select is((select count(*) from public.outbox_events where type like 'shift.%' and type <> 'shift.opened'), 0::bigint, 'publishing announces no assignment (people hear of their shifts from schedule.published)');
 select is((select (payload ->> 'shift_count')::int from public.outbox_events where type = 'schedule.published'), ((select n_open + n_assigned from before_pub))::int, 'schedule.published counts every scheduled shift');
 select is((select array_agg(k order by k) from (select distinct jsonb_object_keys(payload) k from public.outbox_events where type = 'schedule.published') x),
-  array['actor_person_id', 'location_id', 'schedule_id', 'shift_count', 'week_start'], 'its payload is exactly ids, the week, a count and the actor');
-select is((select array_agg(k order by k) from (select distinct jsonb_object_keys(payload) k from public.outbox_events where type = 'shift.opened') x),
-  array['actor_person_id', 'anchor_at', 'ends_at', 'location_id', 'person_id', 'position_id', 'schedule_id', 'shift_id', 'starts_at', 'via'], 'the shift.opened payload: ids, times, via and the actor, no notes');
+  array['actor_person_id', 'location_id', 'open_shift_count', 'schedule_id', 'shift_count', 'week_start'], 'its payload is exactly ids, the week, two counts and the actor');
 select is((select count(*) from public.outbox_events e where e.type like 'shift%' and (e.payload::text like '%NOTE%' or e.payload::text like '%TEMPLATE-NOTE%')), 0::bigint, 'no notes in any payload');
 select pg_temp.act_as('u_s2');
 select cmp_ok((select count(*) from public.shifts), '>', 0::bigint, 'twin: staff now read the published shifts');
@@ -493,6 +492,8 @@ grant all on ev0 to public;
 insert into ids select 'pub_open', public.create_shift(pg_temp.gid('sched'), pg_temp.gid('pos_fd'), pg_temp.a1(6, '09:00'), pg_temp.a1(6, '12:00'));
 select pg_temp.act_as('postgres');
 select is((select count(*) from public.outbox_events where type = 'shift.opened' and entity_id = pg_temp.gid('pub_open') and payload ->> 'via' = 'manager'), 1::bigint, 'a new open shift on a published week: one shift.opened (via manager)');
+select is((select array_agg(k order by k) from (select distinct jsonb_object_keys(payload) k from public.outbox_events where type = 'shift.opened') x),
+  array['actor_person_id', 'anchor_at', 'ends_at', 'location_id', 'person_id', 'position_id', 'schedule_id', 'shift_id', 'starts_at', 'via'], 'the shift.opened payload: ids, times, via and the actor, no notes');
 select pg_temp.act_as('u_manager_a1');
 select public.assign_shift(pg_temp.gid('pub_open'), pg_temp.id('p_s6'));
 select pg_temp.act_as('postgres');

@@ -299,7 +299,9 @@ select is((select string_agg(r.rolname, ',' order by r.rolname) from pg_roles r 
   st.t || ': no API role has any write privilege') from st order by st.t;
 -- (service_role still has SELECT on every table, like the Phase 1 and 2 tables: the known open item "revoke service_role direct reads")
 select is((select string_agg(r.rolname, ',' order by r.rolname) from pg_roles r where r.rolname in ('anon', 'authenticated', 'service_role')
-            and has_table_privilege(r.rolname, 'public.' || st.t, 'select')), 'authenticated,service_role', st.t || ': readable by authenticated (through RLS) and service_role, never by anon') from st order by st.t;
+            and has_table_privilege(r.rolname, 'public.' || st.t, 'select')), case when st.t = 'shifts' then 'service_role' else 'authenticated,service_role' end,
+  st.t || case when st.t = 'shifts' then ': no table-wide SELECT for authenticated (column grants only, see 290), service_role keeps it, anon none'
+               else ': readable by authenticated (through RLS) and service_role, never by anon' end) from st order by st.t;
 -- direct writes are refused for a real user (42501), whatever the row
 select pg_temp.act_as('u_manager_a1');
 select is(pg_temp.fd($$insert into public.availability (organization_id, person_id, day_of_week, start_time, end_time, kind) values (pg_temp.id('org_a'), pg_temp.id('p_manager_a1'), 2, '09:00', '10:00', 'available')$$),
