@@ -1974,14 +1974,6 @@ export type Database = {
         Args: { p_organization_id: string; p_preferred_name: string | null; p_phone: string | null }
         Returns: string
       }
-      time_range: {
-        Args: { arg1: string; arg2: string } | { arg1: string; arg2: string; arg3: string }
-        Returns: string
-      }
-      time_multirange: {
-        Args: never | { arg1: string } | { arg1: string[] }
-        Returns: string
-      }
       person_effective_permission: {
         Args: { p_organization_id: string; p_person_id: string; p_location_id: string | null; p_module_key: string }
         Returns: Database["public"]["Enums"]["permission_level"]

@@ -608,12 +608,10 @@ alter table public.organization_settings
 -- ===========================================================================
 create extension if not exists btree_gist with schema extensions;
 
-create type public.time_range as range (subtype = time);
--- The constructor is evaluated by the exclusion constraint on every write;
--- default privileges withheld EXECUTE, so grant it (it reveals nothing).
-revoke all on function public.time_range(time, time), public.time_range(time, time, text) from public, anon;
-grant execute on function public.time_range(time, time), public.time_range(time, time, text)
-  to authenticated, service_role;
+-- The time-of-day range is built as a timestamp range on a fixed date. A
+-- custom range type would work too, but on hosted Supabase its implicit
+-- constructor functions are owned by supabase_admin and stay executable by
+-- PUBLIC and anon, where a migration cannot revoke them.
 
 -- organization_id and location_id are part of the key on purpose: the
 -- exclusion check runs before the deferred-to-end-of-statement foreign key
@@ -627,7 +625,7 @@ alter table public.space_hours
     location_id with =,
     space_id with =,
     day_of_week with =,
-    public.time_range(opens_at, closes_at, '[)') with &&,
+    tsrange(date '2000-01-01' + opens_at, date '2000-01-01' + closes_at, '[)') with &&,
     daterange(effective_from, effective_to, '[]') with &&
   );
 

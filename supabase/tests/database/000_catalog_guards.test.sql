@@ -357,8 +357,6 @@ select is((select coalesce(string_agg(s.schema_name || '.' || s.proname, ', '), 
 select is((select coalesce(string_agg(g.sig, ', ' order by g.sig), '') from gf g
            where g.nspname in ('public', 'private') and has_function_privilege('service_role', g.oid, 'execute')
              and not has_function_privilege('authenticated', g.oid, 'execute')
-             -- skip implicit constructors of the time_range multirange type (internal dependency on the type)
-             and not exists (select 1 from pg_depend d where d.objid = g.oid and d.deptype = 'i')
              and not exists (select 1 from svc_only s where s.schema_name = g.nspname and s.proname = g.proname)),
   '', 'every function that service_role can execute but authenticated cannot is on the documented service_role-only list');
 
