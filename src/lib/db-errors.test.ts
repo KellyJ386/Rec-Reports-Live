@@ -207,3 +207,98 @@ describe('mapDbError: review fixes (migration 000600)', () => {
     ).toBe('That date or time is not valid. Pick a real one.');
   });
 });
+
+describe('mapDbError: staff scheduling', () => {
+  it('maps the assignment rules from the message and from DETAIL', () => {
+    expect(
+      mapDbError({
+        code: '23514',
+        message: 'that person has approved time off then',
+        details: 'time_off',
+      }),
+    ).toBe('That person has approved time off then.');
+    expect(mapDbError({ code: '23514', message: 'x', details: 'overlap' })).toBe(
+      'That person already has a shift at that time.',
+    );
+    expect(mapDbError({ code: '23514', message: 'x', details: 'qualification' })).toMatch(
+      /qualification/,
+    );
+    expect(mapDbError({ code: '23514', message: 'x', details: 'not_member' })).toMatch(
+      /cannot work at this location/,
+    );
+    expect(mapDbError({ code: '23514', message: 'x', details: 'stale' })).toMatch(/Reload/);
+    expect(mapDbError({ code: '23514', message: 'x', details: 'has_shifts' })).toMatch(/shifts/);
+  });
+
+  it('maps the exchange and time off refusals', () => {
+    expect(mapDbError({ code: '23514', message: 'this shift is no longer open' })).toBe(
+      'Someone else already took this shift.',
+    );
+    expect(
+      mapDbError({
+        code: '23514',
+        message: 'that person has shifts on those days; reassign them first',
+      }),
+    ).toMatch(/Give those shifts/);
+    expect(mapDbError({ code: '23514', message: 'you cannot swap with that person' })).toBe(
+      'You cannot swap with that person.',
+    );
+  });
+
+  it('maps the 42501 variants without sounding like a plain "not allowed"', () => {
+    expect(mapDbError({ code: '42501', message: 'only a schedule admin can override' })).toBe(
+      'Only a schedule admin can assign anyway.',
+    );
+    expect(mapDbError({ code: '42501', message: 'you cannot decide your own swap' })).toBe(
+      'You cannot decide your own request.',
+    );
+    expect(mapDbError({ code: '42501', message: 'you cannot decide your own request' })).toBe(
+      'You cannot decide your own request.',
+    );
+    expect(
+      mapDbError({ code: '42501', message: 'you cannot change your own qualifications' }),
+    ).toBe('You cannot change your own qualifications.');
+    expect(mapDbError({ code: '42501', message: 'not allowed' })).toBe(DENIED_ERROR);
+  });
+
+  it('maps the 22023 messages, and keeps the older "cannot be changed" text apart', () => {
+    for (const message of [
+      'invalid week',
+      "a week must start on the organization's first day of the week",
+      'a shift needs a start and an end',
+      'a shift ends after it starts and lasts at most 24 hours',
+      'the shift must start during the schedule week',
+      'unknown position at this location',
+      'notes are too long',
+      'a name needs 1 to 100 characters',
+      'a position with that name already exists',
+      'at most 20 qualifications',
+      'a template covers 1 day or 7 days',
+      'a template holds at most 200 shifts',
+      'a template can only be added to a draft schedule',
+      'this schedule is already published',
+      'this shift is already cancelled',
+      'this swap is no longer open',
+      'you already asked for this shift',
+      'accept or decline',
+      'approve or deny',
+      'invalid dates',
+      'at most 100 availability windows',
+      'those days are too far in the past or future',
+      'this request can no longer be cancelled',
+    ]) {
+      const text = mapDbError({ code: '22023', message });
+      expect(text, message).not.toBe('A value is not in the right format.');
+      expect(text, message).not.toBe(GENERIC_ERROR);
+    }
+    expect(mapDbError({ code: '22023', message: 'a cancelled shift cannot be changed' })).toBe(
+      'A cancelled shift cannot be changed.',
+    );
+    expect(mapDbError({ code: '22023', message: 'the note is too long' })).toMatch(/500/);
+    expect(mapDbError({ code: '22023', message: 'the reason is too long' })).toMatch(/500/);
+  });
+
+  it('maps the rate limit', () => {
+    expect(mapDbError({ code: 'PT429', message: 'slow down' })).toBe(TOO_FAST_ERROR);
+  });
+});

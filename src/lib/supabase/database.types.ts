@@ -172,6 +172,63 @@ export type Database = {
         Relationships: [
         ]
       }
+      availability: {
+        Row: {
+          id: string
+          organization_id: string
+          person_id: string
+          day_of_week: number
+          start_time: string
+          end_time: string
+          kind: string
+          effective_from: string | null
+          effective_to: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          person_id: string
+          day_of_week: number
+          start_time: string
+          end_time: string
+          kind: string
+          effective_from?: string | null
+          effective_to?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          person_id?: string
+          day_of_week?: number
+          start_time?: string
+          end_time?: string
+          kind?: string
+          effective_from?: string | null
+          effective_to?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "availability_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "availability_person_id_organization_id_fkey"
+            columns: ["person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
       job_titles: {
         Row: {
           id: string
@@ -1025,6 +1082,61 @@ export type Database = {
           },
         ]
       }
+      person_qualifications: {
+        Row: {
+          id: string
+          organization_id: string
+          person_id: string
+          qualification_id: string
+          valid_from: string | null
+          expires_on: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          person_id: string
+          qualification_id: string
+          valid_from?: string | null
+          expires_on?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          person_id?: string
+          qualification_id?: string
+          valid_from?: string | null
+          expires_on?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "person_qualifications_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "person_qualifications_person_id_organization_id_fkey"
+            columns: ["person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "person_qualifications_qualification_id_organization_id_fkey"
+            columns: ["qualification_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "qualifications"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
       platform_admins: {
         Row: {
           user_id: string
@@ -1042,6 +1154,100 @@ export type Database = {
           created_at?: string
         }
         Relationships: [
+        ]
+      }
+      position_qualifications: {
+        Row: {
+          id: string
+          organization_id: string
+          position_id: string
+          qualification_id: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          position_id: string
+          qualification_id: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          position_id?: string
+          qualification_id?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "position_qualifications_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "position_qualifications_position_id_organization_id_fkey"
+            columns: ["position_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "positions"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "position_qualifications_qualification_id_organization_id_fkey"
+            columns: ["qualification_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "qualifications"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      positions: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string | null
+          name: string
+          archived_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id?: string | null
+          name: string
+          archived_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string | null
+          name?: string
+          archived_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "positions_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "positions_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
         ]
       }
       push_subscriptions: {
@@ -1098,6 +1304,41 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "people"
             referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      qualifications: {
+        Row: {
+          id: string
+          organization_id: string
+          name: string
+          archived_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          name: string
+          archived_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          name?: string
+          archived_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "qualifications_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -1253,6 +1494,501 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      schedules: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string
+          week_start: string
+          status: string
+          published_at: string | null
+          published_by_person_id: string | null
+          created_by_person_id: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id: string
+          week_start: string
+          status?: string
+          published_at?: string | null
+          published_by_person_id?: string | null
+          created_by_person_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string
+          week_start?: string
+          status?: string
+          published_at?: string | null
+          published_by_person_id?: string | null
+          created_by_person_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedules_created_by_person_id_organization_id_fkey"
+            columns: ["created_by_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "schedules_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "schedules_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schedules_published_by_person_id_organization_id_fkey"
+            columns: ["published_by_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      shift_claims: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string
+          shift_id: string
+          person_id: string
+          status: string
+          decided_by_person_id: string | null
+          decided_at: string | null
+          auto_approved: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id: string
+          shift_id: string
+          person_id: string
+          status?: string
+          decided_by_person_id?: string | null
+          decided_at?: string | null
+          auto_approved?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string
+          shift_id?: string
+          person_id?: string
+          status?: string
+          decided_by_person_id?: string | null
+          decided_at?: string | null
+          auto_approved?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shift_claims_decided_by_person_id_organization_id_fkey"
+            columns: ["decided_by_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shift_claims_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shift_claims_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shift_claims_person_id_organization_id_fkey"
+            columns: ["person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shift_claims_shift_id_organization_id_location_id_fkey"
+            columns: ["shift_id", "organization_id", "location_id"]
+            isOneToOne: false
+            referencedRelation: "shifts"
+            referencedColumns: ["id", "organization_id", "location_id"]
+          },
+        ]
+      }
+      shift_swaps: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string
+          kind: string
+          shift_id: string
+          counter_shift_id: string | null
+          from_person_id: string
+          to_person_id: string | null
+          note: string | null
+          status: string
+          accepted_at: string | null
+          decided_by_person_id: string | null
+          decided_at: string | null
+          auto_approved: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id: string
+          kind: string
+          shift_id: string
+          counter_shift_id?: string | null
+          from_person_id: string
+          to_person_id?: string | null
+          note?: string | null
+          status?: string
+          accepted_at?: string | null
+          decided_by_person_id?: string | null
+          decided_at?: string | null
+          auto_approved?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string
+          kind?: string
+          shift_id?: string
+          counter_shift_id?: string | null
+          from_person_id?: string
+          to_person_id?: string | null
+          note?: string | null
+          status?: string
+          accepted_at?: string | null
+          decided_by_person_id?: string | null
+          decided_at?: string | null
+          auto_approved?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shift_swaps_counter_shift_id_organization_id_location_id_fkey"
+            columns: ["counter_shift_id", "organization_id", "location_id"]
+            isOneToOne: false
+            referencedRelation: "shifts"
+            referencedColumns: ["id", "organization_id", "location_id"]
+          },
+          {
+            foreignKeyName: "shift_swaps_decided_by_person_id_organization_id_fkey"
+            columns: ["decided_by_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shift_swaps_from_person_id_organization_id_fkey"
+            columns: ["from_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shift_swaps_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shift_swaps_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shift_swaps_shift_id_organization_id_location_id_fkey"
+            columns: ["shift_id", "organization_id", "location_id"]
+            isOneToOne: false
+            referencedRelation: "shifts"
+            referencedColumns: ["id", "organization_id", "location_id"]
+          },
+          {
+            foreignKeyName: "shift_swaps_to_person_id_organization_id_fkey"
+            columns: ["to_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      shift_template_items: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string
+          template_id: string
+          position_id: string
+          day_offset: number
+          start_time: string
+          duration_minutes: number
+          assigned_person_id: string | null
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id: string
+          template_id: string
+          position_id: string
+          day_offset: number
+          start_time: string
+          duration_minutes: number
+          assigned_person_id?: string | null
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string
+          template_id?: string
+          position_id?: string
+          day_offset?: number
+          start_time?: string
+          duration_minutes?: number
+          assigned_person_id?: string | null
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shift_template_items_assigned_person_id_organization_id_fkey"
+            columns: ["assigned_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shift_template_items_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shift_template_items_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shift_template_items_position_id_organization_id_fkey"
+            columns: ["position_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "positions"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shift_template_items_template_id_organization_id_location__fkey"
+            columns: ["template_id", "organization_id", "location_id"]
+            isOneToOne: false
+            referencedRelation: "shift_templates"
+            referencedColumns: ["id", "organization_id", "location_id"]
+          },
+        ]
+      }
+      shift_templates: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string
+          name: string
+          span_days: number
+          archived_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id: string
+          name: string
+          span_days?: number
+          archived_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string
+          name?: string
+          span_days?: number
+          archived_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shift_templates_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shift_templates_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shifts: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string
+          schedule_id: string
+          position_id: string
+          starts_at: string
+          ends_at: string
+          assigned_person_id: string | null
+          status: string
+          notes: string | null
+          created_by_person_id: string | null
+          cancelled_at: string | null
+          override_kinds: string[] | null
+          override_by_person_id: string | null
+          override_at: string | null
+          uncovered_emitted_for: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id: string
+          schedule_id: string
+          position_id: string
+          starts_at: string
+          ends_at: string
+          assigned_person_id?: string | null
+          status?: string
+          notes?: string | null
+          created_by_person_id?: string | null
+          cancelled_at?: string | null
+          override_kinds?: string[] | null
+          override_by_person_id?: string | null
+          override_at?: string | null
+          uncovered_emitted_for?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string
+          schedule_id?: string
+          position_id?: string
+          starts_at?: string
+          ends_at?: string
+          assigned_person_id?: string | null
+          status?: string
+          notes?: string | null
+          created_by_person_id?: string | null
+          cancelled_at?: string | null
+          override_kinds?: string[] | null
+          override_by_person_id?: string | null
+          override_at?: string | null
+          uncovered_emitted_for?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shifts_assigned_person_id_organization_id_fkey"
+            columns: ["assigned_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shifts_created_by_person_id_organization_id_fkey"
+            columns: ["created_by_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shifts_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shifts_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shifts_override_by_person_id_organization_id_fkey"
+            columns: ["override_by_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shifts_position_id_organization_id_fkey"
+            columns: ["position_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "positions"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "shifts_schedule_id_organization_id_location_id_fkey"
+            columns: ["schedule_id", "organization_id", "location_id"]
+            isOneToOne: false
+            referencedRelation: "schedules"
+            referencedColumns: ["id", "organization_id", "location_id"]
           },
         ]
       }
@@ -1803,6 +2539,73 @@ export type Database = {
           },
         ]
       }
+      time_off_requests: {
+        Row: {
+          id: string
+          organization_id: string
+          person_id: string
+          starts_on: string
+          ends_on: string
+          reason: string | null
+          status: string
+          decided_by_person_id: string | null
+          decided_at: string | null
+          cancelled_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          person_id: string
+          starts_on: string
+          ends_on: string
+          reason?: string | null
+          status?: string
+          decided_by_person_id?: string | null
+          decided_at?: string | null
+          cancelled_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          person_id?: string
+          starts_on?: string
+          ends_on?: string
+          reason?: string | null
+          status?: string
+          decided_by_person_id?: string | null
+          decided_at?: string | null
+          cancelled_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "time_off_requests_decided_by_person_id_organization_id_fkey"
+            columns: ["decided_by_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "time_off_requests_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "time_off_requests_person_id_organization_id_fkey"
+            columns: ["person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
       user_permissions: {
         Row: {
           id: string
@@ -2181,6 +2984,142 @@ export type Database = {
       worker_message_recipients_for_event: {
         Args: { p_event_id: string }
         Returns: { organization_id: string; message_id: string; person_id: string; link_path: string }[]
+      }
+      save_position: {
+        Args: { p_organization_id: string; p_location_id: string | null; p_name: string; p_qualification_ids?: string[] | null; p_position_id?: string | null }
+        Returns: string
+      }
+      archive_position: {
+        Args: { p_position_id: string; p_archived?: boolean }
+        Returns: undefined
+      }
+      save_qualification: {
+        Args: { p_organization_id: string; p_name: string; p_qualification_id?: string | null }
+        Returns: string
+      }
+      archive_qualification: {
+        Args: { p_qualification_id: string; p_archived?: boolean }
+        Returns: undefined
+      }
+      set_person_qualification: {
+        Args: { p_organization_id: string; p_person_id: string; p_qualification_id: string; p_valid_from?: string | null; p_expires_on?: string | null }
+        Returns: string
+      }
+      remove_person_qualification: {
+        Args: { p_person_qualification_id: string }
+        Returns: undefined
+      }
+      save_shift_template: {
+        Args: { p_organization_id: string; p_location_id: string; p_name: string; p_span_days?: number | null; p_template_id?: string | null }
+        Returns: string
+      }
+      archive_shift_template: {
+        Args: { p_template_id: string; p_archived?: boolean }
+        Returns: undefined
+      }
+      add_shift_template_item: {
+        Args: { p_template_id: string; p_position_id: string; p_day_offset: number; p_start_time: string; p_duration_minutes: number; p_assigned_person_id?: string | null; p_notes?: string | null }
+        Returns: string
+      }
+      remove_shift_template_item: {
+        Args: { p_item_id: string }
+        Returns: undefined
+      }
+      create_schedule: {
+        Args: { p_organization_id: string; p_location_id: string; p_week_start: string }
+        Returns: string
+      }
+      publish_schedule: {
+        Args: { p_schedule_id: string }
+        Returns: undefined
+      }
+      create_shift: {
+        Args: { p_schedule_id: string; p_position_id: string; p_starts_at: string; p_ends_at: string; p_assigned_person_id?: string | null; p_notes?: string | null; p_override?: boolean }
+        Returns: string
+      }
+      update_shift: {
+        Args: { p_shift_id: string; p_position_id?: string | null; p_starts_at?: string | null; p_ends_at?: string | null; p_notes?: string | null; p_override?: boolean }
+        Returns: undefined
+      }
+      assign_shift: {
+        Args: { p_shift_id: string; p_person_id: string | null; p_override?: boolean }
+        Returns: undefined
+      }
+      cancel_shift: {
+        Args: { p_shift_id: string }
+        Returns: undefined
+      }
+      apply_shift_template: {
+        Args: { p_schedule_id: string; p_template_id: string; p_first_day?: number }
+        Returns: { shift_id: string; assigned_person_id: string | null; refused: string | null }[]
+      }
+      request_shift_swap: {
+        Args: { p_shift_id: string; p_to_person_id: string; p_counter_shift_id?: string | null; p_note?: string | null }
+        Returns: string
+      }
+      respond_shift_swap: {
+        Args: { p_swap_id: string; p_accept: boolean }
+        Returns: string
+      }
+      decide_shift_swap: {
+        Args: { p_swap_id: string; p_approve: boolean; p_override?: boolean }
+        Returns: undefined
+      }
+      cancel_shift_swap: {
+        Args: { p_swap_id: string }
+        Returns: undefined
+      }
+      request_shift_drop: {
+        Args: { p_shift_id: string; p_note?: string | null }
+        Returns: string
+      }
+      request_shift_claim: {
+        Args: { p_shift_id: string }
+        Returns: string
+      }
+      decide_shift_claim: {
+        Args: { p_claim_id: string; p_approve: boolean; p_override?: boolean }
+        Returns: undefined
+      }
+      cancel_shift_claim: {
+        Args: { p_claim_id: string }
+        Returns: undefined
+      }
+      my_claimable_shifts: {
+        Args: { p_organization_id: string; p_limit?: number }
+        Returns: { shift_id: string; location_id: string; schedule_id: string; position_id: string; starts_at: string; ends_at: string }[]
+      }
+      add_availability: {
+        Args: { p_organization_id: string; p_day_of_week: number; p_start_time: string; p_end_time: string; p_kind: string; p_effective_from?: string | null; p_effective_to?: string | null }
+        Returns: string
+      }
+      remove_availability: {
+        Args: { p_availability_id: string }
+        Returns: undefined
+      }
+      request_time_off: {
+        Args: { p_organization_id: string; p_starts_on: string; p_ends_on: string; p_reason?: string | null }
+        Returns: string
+      }
+      cancel_time_off: {
+        Args: { p_time_off_id: string }
+        Returns: undefined
+      }
+      decide_time_off: {
+        Args: { p_time_off_id: string; p_approve: boolean }
+        Returns: undefined
+      }
+      emit_uncovered_shift_events: {
+        Args: { p_within: string; p_limit?: number }
+        Returns: number
+      }
+      worker_shift_for_event: {
+        Args: { p_event_id: string }
+        Returns: { shift_id: string; organization_id: string; location_id: string; location_name: string; location_timezone: string; schedule_id: string; schedule_status: string; week_start: string; position_id: string; position_name: string; starts_at: string; ends_at: string; assigned_person_id: string | null; status: string }[]
+      }
+      worker_shift_event_recipients: {
+        Args: { p_event_id: string }
+        Returns: { person_id: string; reason: string }[]
       }
     }
     Enums: {

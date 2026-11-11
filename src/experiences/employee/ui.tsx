@@ -30,6 +30,11 @@ export function StaffNav({ access }: { access: StaffAccess }) {
             <Link href="/app/my-work">My work</Link>
           </li>
         ) : null}
+        {access.schedule ? (
+          <li>
+            <Link href="/app/schedule">Schedule</Link>
+          </li>
+        ) : null}
         {access.comms ? (
           <li>
             <Link href="/app/notices">Notices</Link>

@@ -155,3 +155,46 @@ export async function updateOrganizationSettings(
   if (error) return failure(error);
   return requireChanged(data);
 }
+
+/** The two staffing switches kept in organization_settings.settings.staffing (both default to off). */
+export type StaffingSwitches = { auto_approve_swaps: boolean; first_come_open_shifts: boolean };
+
+export async function getStaffingSwitches(orgId: string): Promise<Result<StaffingSwitches>> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('organization_settings')
+    .select('settings')
+    .eq('organization_id', orgId)
+    .maybeSingle();
+  if (error) return failure(error);
+  const raw = (data?.settings ?? {}) as Record<string, unknown>;
+  const staffing = (raw.staffing ?? {}) as Record<string, unknown>;
+  return ok({
+    auto_approve_swaps: staffing.auto_approve_swaps === true,
+    first_come_open_shifts: staffing.first_come_open_shifts === true,
+  });
+}
+
+/** Changes only the staffing key; every other setting is kept as it is. */
+export async function updateStaffingSwitches(
+  orgId: string,
+  switches: StaffingSwitches,
+): Promise<Result<number>> {
+  const supabase = await createClient();
+  const { data: current, error: readError } = await supabase
+    .from('organization_settings')
+    .select('settings')
+    .eq('organization_id', orgId)
+    .maybeSingle();
+  if (readError) return failure(readError);
+  const base = (current?.settings ?? {}) as Record<string, unknown>;
+  const { data, error } = await supabase
+    .from('organization_settings')
+    .update({
+      settings: { ...base, staffing: switches } as Tables<'organization_settings'>['settings'],
+    })
+    .eq('organization_id', orgId)
+    .select('id');
+  if (error) return failure(error);
+  return requireChanged(data);
+}

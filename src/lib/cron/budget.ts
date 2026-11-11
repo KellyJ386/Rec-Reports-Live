@@ -19,3 +19,5 @@ export const DELIVERY_BATCH_SIZE = 10;
 /** Every outbound HTTP call (Resend, push services) gives up after this long. */
 export const OUTBOUND_TIMEOUT_MS = 8_000;
 export const OVERDUE_SWEEP_LIMIT = 500;
+/** An open, published shift starting within this many hours is reported as uncovered. */
+export const UNCOVERED_WITHIN_HOURS = 48;

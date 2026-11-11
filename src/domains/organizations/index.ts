@@ -10,11 +10,18 @@ export {
   getLocation,
   getOrganization,
   getOrganizationSettings,
+  getStaffingSwitches,
   listAllLocations,
   listLocations,
   setLocationArchived,
   updateLocation,
   updateOrganization,
   updateOrganizationSettings,
+  updateStaffingSwitches,
 } from './service';
-export type { Location, OrganizationSettings, OrganizationSummary } from './service';
+export type {
+  Location,
+  OrganizationSettings,
+  OrganizationSummary,
+  StaffingSwitches,
+} from './service';

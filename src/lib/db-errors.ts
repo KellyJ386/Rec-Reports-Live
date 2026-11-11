@@ -39,6 +39,11 @@ export const NO_CHANGE_ERROR =
 
 // Trigger messages raised by our migrations, matched by a lowercase fragment.
 const TRIGGER_MESSAGES: ReadonlyArray<readonly [string, string]> = [
+  // Staff scheduling texts that contain a shorter older fragment ("cannot be changed", "note is
+  // too long") come first.
+  ['a cancelled shift cannot be', 'A cancelled shift cannot be changed.'],
+  ['the note is too long', 'That note is too long. Keep it under 500 characters.'],
+  ['the reason is too long', 'That reason is too long. Keep it under 500 characters.'],
   ['a sub-space cannot have its own', 'A sub-space cannot have sub-spaces of its own.'],
   ['cannot become a sub-space', 'This space has sub-spaces, so it cannot become a sub-space.'],
   ['cannot be changed', 'That field cannot be changed once it is saved.'],
@@ -135,7 +140,107 @@ const TRIGGER_MESSAGES: ReadonlyArray<readonly [string, string]> = [
     'A rule for overdue tasks uses this template, so it must be due at least 1 minute later.',
   ],
   ['retried too many times', 'That job was already retried 3 times. Ask support for help.'],
+
+  // Staff scheduling (20261113000100). Rule refusals first: their messages are stable.
+  ['that person cannot work at this location', 'That person cannot work at this location.'],
+  ['that person already has a shift at that time', 'That person already has a shift at that time.'],
+  ['that person has approved time off then', 'That person has approved time off then.'],
+  [
+    'that person is missing a required qualification',
+    'That person is missing a required qualification.',
+  ],
+  ['only a schedule admin can override', 'Only a schedule admin can assign anyway.'],
+  ['you cannot decide your own', 'You cannot decide your own request.'],
+  ['you cannot change your own qualifications', 'You cannot change your own qualifications.'],
+  ['you cannot swap with that person', 'You cannot swap with that person.'],
+  [
+    'the shift changed since the swap was offered',
+    'The shift changed after the swap was offered. Start again.',
+  ],
+  [
+    'changed since the drop was requested',
+    'The shift changed after the drop was requested. Start again.',
+  ],
+  ['this shift is no longer open', 'Someone else already took this shift.'],
+  [
+    'that person has shifts on those days',
+    'That person has shifts on those days. Give those shifts to someone else first.',
+  ],
+  [
+    'another schedule already covers part of that week',
+    'Another schedule already covers part of that week.',
+  ],
+  ['a week must start on', "A week must start on the organization's first day of the week."],
+  ['invalid week', 'Pick a real week.'],
+  ['a shift needs a start and an end', 'A shift needs a start and an end.'],
+  [
+    'a shift ends after it starts and lasts at most 24 hours',
+    'A shift must end after it starts and last at most 24 hours.',
+  ],
+  ['the shift must start during the schedule week', 'The shift must start during that week.'],
+  ['unknown position at this location', 'That position is not available at this location.'],
+  ['notes are too long', 'Those notes are too long. Keep them under 1000 characters.'],
+  ['a name needs 1 to 100 characters', 'A name needs 1 to 100 characters.'],
+  ['a position with that name already exists', 'A position with that name already exists.'],
+  [
+    'a qualification with that name already exists',
+    'A qualification with that name already exists.',
+  ],
+  ['unknown qualification', 'That qualification is not available.'],
+  ['at most 20 qualifications', 'A position can need at most 20 qualifications.'],
+  [
+    'a position still requires this qualification',
+    'A position still needs this qualification. Change the position first.',
+  ],
+  ['the location of a position cannot change', 'The location of a position cannot change.'],
+  ['a template covers 1 day or 7 days', 'A template covers 1 day or 7 days.'],
+  ['the length of a template cannot change', 'The length of a template cannot change.'],
+  ['that day is outside the template', 'That day is outside the template.'],
+  ['that day is outside the week', 'That day is outside the week.'],
+  [
+    'a shift needs a start time and 15 minutes to 24 hours',
+    'A shift needs a start time and 15 minutes to 24 hours.',
+  ],
+  ['a template holds at most 200 shifts', 'A template holds at most 200 shifts.'],
+  ['that template belongs to another location', 'That template belongs to another location.'],
+  ['that template is archived', 'That template is archived, so a rule cannot use it.'],
+  [
+    'a template can only be added to a draft schedule',
+    'A template can only be added to a draft schedule.',
+  ],
+  ['this schedule is already published', 'This schedule is already published.'],
+  ['this shift is already cancelled', 'This shift is already cancelled.'],
+  ['this shift cannot be swapped now', 'This shift cannot be swapped now.'],
+  ['this shift cannot be dropped now', 'This shift cannot be dropped now.'],
+  ['that shift cannot be part of this swap', 'That shift cannot be part of this swap.'],
+  ['this shift already has an open swap or drop', 'This shift already has an open swap or drop.'],
+  ['this swap is no longer open', 'This swap is no longer open.'],
+  ['this request is not waiting for a decision', 'This request is not waiting for a decision.'],
+  ['this request is already closed', 'This request is already closed.'],
+  ['you already asked for this shift', 'You already asked for this shift.'],
+  ['accept or decline', 'Choose accept or decline.'],
+  ['approve or deny', 'Choose approve or deny.'],
+  ['invalid day', 'Pick a day of the week.'],
+  ['invalid kind', 'Pick a kind from the list.'],
+  ['invalid dates', 'Those dates are not valid.'],
+  ['the end must be after the start', 'The end must be after the start.'],
+  ['at most 100 availability windows', 'You can save at most 100 availability times.'],
+  [
+    'choose a first and last day, at most a year apart',
+    'Choose a first and last day, at most a year apart.',
+  ],
+  ['those days are too far in the past or future', 'Those days are too far in the past or future.'],
+  ['this request can no longer be cancelled', 'This request can no longer be cancelled.'],
 ];
+
+const RULE_DETAIL_TEXT: Readonly<Record<string, string>> = {
+  not_member: 'That person cannot work at this location.',
+  overlap: 'That person already has a shift at that time.',
+  time_off: 'That person has approved time off then.',
+  qualification: 'That person is missing a required qualification.',
+  stale: 'That changed while you were looking. Reload and try again.',
+  has_shifts: 'That person has shifts on those days. Give those shifts to someone else first.',
+};
 
 export function mapDbError(
   error: DbErrorLike | null | undefined,
@@ -147,6 +252,11 @@ export function mapDbError(
 
   for (const [fragment, text] of TRIGGER_MESSAGES) {
     if (message.includes(fragment)) return text;
+  }
+  // A 23514 from the schedule rules carries the rule code in DETAIL.
+  if (code === '23514') {
+    const rule = RULE_DETAIL_TEXT[(error.details ?? '').trim()];
+    if (rule) return rule;
   }
   if (code === 'PT429' || code === '429' || error.status === 429) return TOO_FAST_ERROR;
   if (code === '54000') return 'That is over the limit. Remove something and try again.';

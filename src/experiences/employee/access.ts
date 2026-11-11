@@ -20,16 +20,19 @@ export type StaffAccess = {
   comms: boolean;
   /** communications >= edit somewhere: may write messages. */
   commsEdit: boolean;
+  /** staff_schedule >= view somewhere: sees "Schedule". */
+  schedule: boolean;
 };
 
 export const getStaffAccess = cache(async (orgId: string): Promise<StaffAccess> => {
-  const [tasks, tasksEdit, comms, commsEdit] = await Promise.all([
+  const [tasks, tasksEdit, comms, commsEdit, schedule] = await Promise.all([
     permissionAnywhere(orgId, 'tasks', 'view'),
     permissionAnywhere(orgId, 'tasks', 'edit'),
     permissionAnywhere(orgId, 'communications', 'view'),
     permissionAnywhere(orgId, 'communications', 'edit'),
+    permissionAnywhere(orgId, 'staff_schedule', 'view'),
   ]);
-  return { tasks, tasksEdit, comms, commsEdit };
+  return { tasks, tasksEdit, comms, commsEdit, schedule };
 });
 
 export type StaffContext = {

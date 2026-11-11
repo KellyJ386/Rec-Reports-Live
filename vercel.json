@@ -3,6 +3,7 @@
   "crons": [
     { "path": "/api/cron/drain-outbox", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/deliver-notifications", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/task-overdue", "schedule": "*/15 * * * *" }
+    { "path": "/api/cron/task-overdue", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/uncovered-shifts", "schedule": "*/15 * * * *" }
   ]
 }

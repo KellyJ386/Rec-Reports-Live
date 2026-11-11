@@ -35,6 +35,12 @@ export type AdminAccess = {
   canTasks: boolean;
   /** communications = admin somewhere (write and manage notices). */
   canNotices: boolean;
+  /** staff_schedule >= edit somewhere (build and publish schedules, templates). */
+  canSchedule: boolean;
+  /** staff_schedule = admin somewhere (positions, qualifications, override rules). */
+  canScheduleAdmin: boolean;
+  /** shift_swaps = admin or availability_time_off = admin somewhere (decide requests). */
+  canScheduleRequests: boolean;
 };
 
 const hasRole = cache(async (orgId: string, locationId: string | null, role: string) => {
@@ -95,6 +101,10 @@ export const getAdminAccess = cache(async (orgId: string): Promise<AdminAccess> 
     canAudit,
     canTasks,
     canNotices,
+    canSchedule,
+    canScheduleAdmin,
+    swapsAdmin,
+    timeOffAdmin,
   ] = await Promise.all([
     hasRole(orgId, null, 'admin'),
     Promise.all(locations.map((id) => hasRole(orgId, id, 'admin'))).then((r) => r.some(Boolean)),
@@ -105,6 +115,10 @@ export const getAdminAccess = cache(async (orgId: string): Promise<AdminAccess> 
     permissionAnywhere(orgId, 'audit_log', 'view'),
     permissionAnywhere(orgId, 'tasks', 'admin'),
     permissionAnywhere(orgId, 'communications', 'admin'),
+    permissionAnywhere(orgId, 'staff_schedule', 'edit'),
+    permissionAnywhere(orgId, 'staff_schedule', 'admin'),
+    permissionAnywhere(orgId, 'shift_swaps', 'admin'),
+    permissionAnywhere(orgId, 'availability_time_off', 'admin'),
   ]);
   return {
     isOrgAdmin,
@@ -116,6 +130,9 @@ export const getAdminAccess = cache(async (orgId: string): Promise<AdminAccess> 
     canAudit,
     canTasks,
     canNotices,
+    canSchedule,
+    canScheduleAdmin,
+    canScheduleRequests: swapsAdmin || timeOffAdmin,
   };
 });
 

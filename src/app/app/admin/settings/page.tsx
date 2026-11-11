@@ -1,16 +1,22 @@
 import { requireAdminArea } from '@/experiences/admin/access';
 import { ActionForm } from '@/experiences/admin/action-form';
 import { updateSettingsAction } from '@/experiences/admin/actions/settings';
+import { updateStaffingSwitchesAction } from '@/experiences/admin/actions/schedule';
 import { TimeZoneSelect } from '@/experiences/admin/fields';
 import { ErrorMessage } from '@/experiences/admin/ui';
 import { WEEK_START_OPTIONS } from '@/lib/time';
-import { getOrganization, getOrganizationSettings } from '@/domains/organizations';
+import {
+  getOrganization,
+  getOrganizationSettings,
+  getStaffingSwitches,
+} from '@/domains/organizations';
 
 export default async function SettingsPage() {
   const { orgId } = await requireAdminArea('isOrgAdmin');
-  const [org, settings] = await Promise.all([
+  const [org, settings, switches] = await Promise.all([
     getOrganization(orgId),
     getOrganizationSettings(orgId),
+    getStaffingSwitches(orgId),
   ]);
   if (!org.ok) return <ErrorMessage message={org.message} />;
   if (!settings.ok) return <ErrorMessage message={settings.message} />;
@@ -44,6 +50,35 @@ export default async function SettingsPage() {
           </label>
         </p>
       </ActionForm>
+      <h2>Staff scheduling</h2>
+      {!switches.ok ? (
+        <ErrorMessage message={switches.message} />
+      ) : (
+        <ActionForm action={updateStaffingSwitchesAction} submitLabel="Save">
+          <p>
+            <label>
+              <input
+                type="checkbox"
+                name="auto_approve_swaps"
+                value="yes"
+                defaultChecked={switches.data.auto_approve_swaps}
+              />{' '}
+              Approve swaps without a manager once both people agree
+            </label>
+          </p>
+          <p>
+            <label>
+              <input
+                type="checkbox"
+                name="first_come_open_shifts"
+                value="yes"
+                defaultChecked={switches.data.first_come_open_shifts}
+              />{' '}
+              Give an open shift to the first person who asks, if they can work it
+            </label>
+          </p>
+        </ActionForm>
+      )}
     </main>
   );
 }
