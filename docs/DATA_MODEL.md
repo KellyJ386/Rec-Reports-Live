@@ -88,7 +88,7 @@ Every table that may hold injury or medical details must list those columns in `
 
 ## Phase 2 schema (built)
 
-Migrations: `20261112000100_auth_hardening` (admin tier needs `aal2`, `consume_rate_limit`, `can_manage_person_account`), `..000200_outbox_and_jobs`, `..000300_tasks_and_workflows`, `..000400_communications`, `..000500_notifications`, `..000600_phase2_review_fixes` (review fixes; changes noted in the rows below). Access rules and RPC contracts are in `docs/SECURITY.md`. Every table below follows the conventions above (composite FKs, immutable `id`/`organization_id`/`location_id`, server timestamps, RLS, explicit grants, `zz_audit`).
+Migrations: `20261112000100_auth_hardening` (admin tier needs `aal2`, `consume_rate_limit`, `can_manage_person_account`), `..000200_outbox_and_jobs`, `..000300_tasks_and_workflows`, `..000400_communications`, `..000500_notifications`, `..000600_phase2_review_fixes` (review fixes; changes noted in the rows below), `..000700_worker_message_recipients` (worker read function for message recipients; no schema change). Access rules and RPC contracts are in `docs/SECURITY.md`. Every table below follows the conventions above (composite FKs, immutable `id`/`organization_id`/`location_id`, server timestamps, RLS, explicit grants, `zz_audit`).
 
 | Table | Scope | Notes that differ from the obvious |
 | --- | --- | --- |
@@ -124,7 +124,7 @@ Audit redactions (value becomes `"[redacted]"`): `outbox_events.last_error`, `ta
 | `notice.published` | `publish_notice` (available to workers at `publish_at`) | the notice's home | `notice_id, location_id, urgency, requires_acknowledgment, publish_at, expires_at` |
 | `notice.archived` | `archive_notice` | the notice's home | `notice_id, location_id` |
 | `notice.acknowledged` | `acknowledge_notice` (first time only) | the notice's home | `notice_id, person_id` |
-| `message.sent` | `send_message` | null | `message_id` (sender and recipients were removed in `000600`, also from rows written before; no tenant can read `message.*` rows) |
+| `message.sent` | `send_message` | null | `message_id` (sender and recipients were removed in `000600`, also from rows written before; no tenant can read `message.*` rows). The worker gets the recipients from `worker_message_recipients_for_event` (`000700`). |
 
 Every event also carries `correlation_id`, `causation_id` and `causation_depth` (columns, not payload). Events emitted while handling another event (`task.created` from a rule, `task.overdue` of a rule-made task) pass it as the cause.
 

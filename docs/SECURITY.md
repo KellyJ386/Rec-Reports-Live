@@ -276,7 +276,11 @@ public.worker_notice_for_event(p_event_id uuid) returns table (notice_id, organi
     requires_acknowledgment, publish_at, expires_at)
 public.worker_notification_for_delivery(p_delivery_id uuid) returns table (delivery_id, notification_id, organization_id,
     person_id, channel, status, attempts, kind, title, body, link_path, urgency)
-public.worker_email_for_delivery(p_delivery_id uuid) returns text   -- confirmed auth.users.email of the person's active account; never people.email
+public.worker_email_for_delivery(p_delivery_id uuid) returns text   -- confirmed auth.users.email of the person's active account; never people.email;
+    -- since 000700 also null when auth.users.banned_until is in the future or deleted_at is set
+public.worker_message_recipients_for_event(p_event_id uuid) returns table (organization_id uuid, message_id uuid, person_id uuid, link_path text)
+    -- (000700) message.sent event only, message in the event's organization; recipients except the sender who are active
+    -- members; no body, sender or read state. Handlers notify with generic text ("You have a new message").
 public.worker_push_subscriptions_for_delivery(p_delivery_id uuid) returns table (subscription_id, endpoint, p256dh, auth_secret)
 public.release_outbox_event(p_id uuid, p_worker text) returns boolean            -- give back a claim, attempt not counted
 public.release_notification_delivery(p_id uuid, p_worker text) returns boolean
@@ -286,6 +290,10 @@ public.escalate_overdue_task(p_event_id uuid) returns setof uuid
     -- location when the task is unassigned or the assignee has not started/completed/reopened/commented; idempotent per event
 ```
 Changed behaviour of existing functions: `retry_dead_outbox_event` refuses `message.*` events (42501) and a 4th manual retry (22023); `publish_notice` validates everything before writing (an expiry before the publish time is 22023, not 23514); `fail_notification_delivery` keeps `next_attempt_at` on a final failure; `create_task` / `publish_notice` refuse non-finite times with 22023.
+
+### Message notifications (migration `20261112000700_worker_message_recipients`)
+
+The worker learns who to tell about a message only through `public.worker_message_recipients_for_event` (service_role only; refuses any JWT with a `sub`). It returns ids and an app link (`/app/messages/<id>`), never content, so message text never reaches `notifications`, the outbox or the audit log: the notification title is generic ("You have a new message") and its body is empty. `escalate_overdue_task` does not exclude the assignee (it returns everyone with `tasks` = `admin` at the location, which can include an assignee who is a manager); notifying the assignee separately with the same `kind` and event is safe because `create_notification` is idempotent on (event, person, kind).
 
 ### People RPCs (migration `20261111000500_people_rpcs`)
 
