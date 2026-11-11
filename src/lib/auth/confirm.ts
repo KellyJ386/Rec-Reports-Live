@@ -29,3 +29,63 @@ export function parseConfirmRequest(
   if (code) return { kind: 'code', code, next };
   return null;
 }
+
+/**
+ * Plain words for what pressing the button will do. The address the link was sent to is not
+ * available before the token is verified (it is inside the token, which is checked only when
+ * the button is pressed), so the page cannot name the account. It says what kind of link this
+ * is, and that it acts on the account the link was sent to.
+ */
+export function describeConfirm(request: ConfirmRequest): {
+  heading: string;
+  lines: string[];
+  button: string;
+} {
+  const kind = request.kind === 'otp' ? request.type : 'code';
+  const unknownAccount = 'We cannot show which account until you continue.';
+  switch (kind) {
+    case 'recovery':
+      return {
+        heading: 'Reset your password',
+        lines: [
+          'This link signs you in to the account it was sent to, so you can choose a new password for it.',
+          unknownAccount,
+        ],
+        button: 'Continue and choose a new password',
+      };
+    case 'invite':
+      return {
+        heading: 'Accept your invite',
+        lines: [
+          'This link signs you in to the account that was created for you, so you can choose a password.',
+          unknownAccount,
+        ],
+        button: 'Accept invite',
+      };
+    case 'email':
+      return {
+        heading: 'Sign in with this link',
+        lines: ['This link signs you in to the account it was sent to.', unknownAccount],
+        button: 'Sign in',
+      };
+    default:
+      return {
+        heading: 'Finish signing in',
+        lines: ['This link signs you in to the account it was sent to.', unknownAccount],
+        button: 'Continue',
+      };
+  }
+}
+
+/**
+ * After a link is verified: did it replace a different person's session in this browser? That
+ * is the login-CSRF case (a link planted to sign someone into the wrong account), and the person
+ * is told. The same person re-confirming a link is not a switch.
+ */
+export function sessionSwitch(
+  previousUserId: string | null | undefined,
+  verifiedUserId: string | null | undefined,
+): 'none' | 'switched' {
+  if (!previousUserId || !verifiedUserId) return 'none';
+  return previousUserId === verifiedUserId ? 'none' : 'switched';
+}

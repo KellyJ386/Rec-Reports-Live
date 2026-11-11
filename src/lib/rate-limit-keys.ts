@@ -2,16 +2,26 @@
 import { createHmac } from 'node:crypto';
 
 /**
- * The client IP, taken only from headers the hosting platform sets itself.
+ * The client IP, taken only from headers the hosting platform sets itself, and only when this
+ * app is running on that platform.
  *
  * Not `x-forwarded-for`: its first hop is whatever the client sent on hosts that append to it
  * instead of overwriting it, so an attacker could pick a fresh "IP" per request and never hit
- * a limit. Vercel (this app's host, see CLAUDE.md) sets `x-vercel-forwarded-for` and
- * `x-real-ip` to the connecting client and drops client-supplied copies. If neither is present
- * (local development, or a host that does not set them) this returns null and the caller
- * skips the per-IP limit: a shared "unknown" bucket would let one client lock everyone out.
+ * a limit. On Vercel (this app's host, see CLAUDE.md, detected by `process.env.VERCEL`) the
+ * edge sets `x-vercel-forwarded-for` and `x-real-ip` to the connecting client and drops
+ * client-supplied copies. Anywhere else (local development, `next start` behind some other
+ * proxy, a preview on another host) nothing sets those headers for us, so a client could send
+ * them itself: they are ignored and there is no IP bucket. (A shared "unknown" bucket would let
+ * one client lock everyone out.) The caller then relies on the email-based limits only.
+ * The `@vercel/functions` helper (`ipAddress`) is not installed and not needed: it reads the
+ * same header.
  */
 export const TRUSTED_IP_HEADERS = ['x-vercel-forwarded-for', 'x-real-ip'] as const;
+
+/** True only on Vercel's platform (it sets VERCEL=1 at build and run time). */
+export function runningOnVercel(env: Record<string, string | undefined> = process.env): boolean {
+  return env.VERCEL === '1' || env.VERCEL === 'true';
+}
 
 const IPV4 = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 
@@ -55,7 +65,11 @@ export function normalizeIp(raw: string | null | undefined): string | null {
   return prefix ? `${prefix}::/64` : null;
 }
 
-export function clientIp(headers: { get(name: string): string | null }): string | null {
+export function clientIp(
+  headers: { get(name: string): string | null },
+  onVercel: boolean = runningOnVercel(),
+): string | null {
+  if (!onVercel) return null;
   for (const name of TRUSTED_IP_HEADERS) {
     const value = headers.get(name);
     if (!value) continue;
@@ -82,12 +96,31 @@ export function ipKey(ip: string, secret: string): string {
   return digest(secret, 'ip', ip);
 }
 
+/** Keyed hash of an email and a normalised IP together: one counter per (account, network). */
+export function pairKey(email: string, ip: string, secret: string): string {
+  return digest(secret, 'pair', `${email.trim().toLowerCase()}|${ip}`);
+}
+
+/**
+ * The database accepts bucket names matching ^[a-z][a-z0-9_.:-]{0,62}$ (consume_rate_limit), so
+ * `signIn` is sent as `sign-in`.
+ */
+export function bucketName(bucket: string, kind: 'pair' | 'email' | 'ip'): string {
+  const kebab = bucket.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+  return `${kebab}:${kind}`;
+}
+
 export type KeyPlan = { bucket: string; key: string; max: number; windowSeconds: number };
 
-/** The rows to count for one attempt: one per email, one per IP (when known). */
+/**
+ * The counters to consume for one attempt, tightest first: one per (email, IP) pair, then one
+ * per email, then one per IP. A counter is left out when its limit is not configured or the
+ * value it needs (the email, the IP) is unknown. Order matters: see runPlan.
+ */
 export function planKeys(input: {
   bucket: string;
   limits: {
+    pair?: { max: number; windowSeconds: number };
     email?: { max: number; windowSeconds: number };
     ip?: { max: number; windowSeconds: number };
   };
@@ -96,19 +129,23 @@ export function planKeys(input: {
   secret: string;
 }): KeyPlan[] {
   const plan: KeyPlan[] = [];
-  if (input.limits.email && input.email) {
+  const { limits, email, ip, secret } = input;
+  if (limits.pair && email && ip) {
     plan.push({
-      bucket: `${input.bucket}:email`,
-      key: emailKey(input.email, input.secret),
-      ...input.limits.email,
+      bucket: bucketName(input.bucket, 'pair'),
+      key: pairKey(email, ip, secret),
+      ...limits.pair,
     });
   }
-  if (input.limits.ip && input.ip) {
+  if (limits.email && email) {
     plan.push({
-      bucket: `${input.bucket}:ip`,
-      key: ipKey(input.ip, input.secret),
-      ...input.limits.ip,
+      bucket: bucketName(input.bucket, 'email'),
+      key: emailKey(email, secret),
+      ...limits.email,
     });
+  }
+  if (limits.ip && ip) {
+    plan.push({ bucket: bucketName(input.bucket, 'ip'), key: ipKey(ip, secret), ...limits.ip });
   }
   return plan;
 }
@@ -127,4 +164,23 @@ export function shouldBlock(outcome: LimitOutcome, failMode: 'open' | 'closed'):
   if (outcome === 'limited') return true;
   if (outcome === 'error') return failMode === 'closed';
   return false;
+}
+
+/**
+ * Consumes the plan in order and stops at the first "limited": the looser counters after it are
+ * not touched. This is what keeps an attacker who is already blocked on their own (email, IP)
+ * pair from also pushing up the account-wide and network-wide counters and locking out the real
+ * owner. An "error" does not stop the walk (the other counters still guard the endpoint).
+ */
+export async function runPlan(
+  plan: readonly KeyPlan[],
+  consume: (step: KeyPlan) => Promise<LimitOutcome>,
+): Promise<LimitOutcome> {
+  const outcomes: LimitOutcome[] = [];
+  for (const step of plan) {
+    const outcome = await consume(step);
+    outcomes.push(outcome);
+    if (outcome === 'limited') break;
+  }
+  return combineOutcomes(outcomes);
 }

@@ -10,6 +10,11 @@ import type { DeviceResult } from './actions/notifications';
 type Props = {
   /** NEXT_PUBLIC_VAPID_PUBLIC_KEY, read on the server and passed in. */
   vapidPublicKey: string;
+  /**
+   * How many devices the server has for this person. When it is 0 a subscription found in this
+   * browser belongs to someone else (or to nobody), so the button is offered instead of "on".
+   */
+  knownDevices: number;
   save: (input: {
     endpoint: string;
     p256dh: string;
@@ -36,7 +41,7 @@ function supported(): boolean {
   return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 }
 
-export function PushToggle({ vapidPublicKey, save, remove }: Props) {
+export function PushToggle({ vapidPublicKey, knownDevices, save, remove }: Props) {
   const [status, setStatus] = useState<Status>('checking');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -55,7 +60,7 @@ export function PushToggle({ vapidPublicKey, save, remove }: Props) {
       try {
         const registration = await navigator.serviceWorker.getRegistration('/sw.js');
         const existing = registration ? await registration.pushManager.getSubscription() : null;
-        if (!cancelled) setStatus(existing ? 'on' : 'off');
+        if (!cancelled) setStatus(existing && knownDevices > 0 ? 'on' : 'off');
       } catch {
         if (!cancelled) setStatus('off');
       }
@@ -64,6 +69,8 @@ export function PushToggle({ vapidPublicKey, save, remove }: Props) {
     return () => {
       cancelled = true;
     };
+    // knownDevices is read once per page load on purpose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function turnOn() {
@@ -77,6 +84,12 @@ export function PushToggle({ vapidPublicKey, save, remove }: Props) {
       }
       const registration = await navigator.serviceWorker.register('/sw.js');
       await navigator.serviceWorker.ready;
+      // A browser keeps one push endpoint per site, shared by whoever signs in on it. If an
+      // endpoint is left over (the previous person did not sign out cleanly, or turned it on
+      // here), drop it so this person gets a new endpoint. The old endpoint then stops working
+      // at the push service, so the previous person's saved row can no longer reach this device.
+      const leftover = await registration.pushManager.getSubscription();
+      if (leftover) await leftover.unsubscribe().catch(() => false);
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: keyToBytes(vapidPublicKey),

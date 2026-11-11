@@ -136,7 +136,12 @@ export default async function NotificationsPage({
       {vapidKey === '' ? (
         <p>Device notifications are not set up yet.</p>
       ) : (
-        <PushToggle vapidPublicKey={vapidKey} save={saveDeviceAction} remove={removeDeviceAction} />
+        <PushToggle
+          vapidPublicKey={vapidKey}
+          knownDevices={devices.ok ? devices.data : 0}
+          save={saveDeviceAction}
+          remove={removeDeviceAction}
+        />
       )}
     </main>
   );

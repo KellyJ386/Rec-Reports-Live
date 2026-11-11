@@ -8,6 +8,7 @@ import {
   effectiveLevelKey,
   scopeProblem,
   classifyInviteError,
+  inviteCleanupDecision,
   inviteErrorMessage,
   inviteView,
   mayLinkInvitedUser,
@@ -159,5 +160,39 @@ describe('mayLinkInvitedUser', () => {
   it('never links a user that already belongs to another person', () => {
     expect(mayLinkInvitedUser({ ...base, linkedAccountPersonIds: [OTHER] })).toBe(false);
     expect(mayLinkInvitedUser({ ...base, linkedAccountPersonIds: [P, OTHER] })).toBe(false);
+  });
+});
+
+describe('inviteCleanupDecision', () => {
+  const START = Date.parse('2027-03-01T10:00:00.000Z');
+  const base = {
+    userCreatedAt: '2027-03-01T10:00:02.000Z',
+    callStartedAtMs: START,
+    confirmedAt: null,
+    lastSignInAt: null,
+    linkedAccountCount: 0,
+  };
+  it('deletes only a user created after this call began that nothing points at', () => {
+    expect(inviteCleanupDecision(base)).toBe('delete');
+  });
+  it('leaves a user that existed before the call, or was created at the same instant', () => {
+    expect(inviteCleanupDecision({ ...base, userCreatedAt: '2027-01-01T00:00:00Z' })).toBe('leave');
+    expect(inviteCleanupDecision({ ...base, userCreatedAt: '2027-03-01T10:00:00.000Z' })).toBe(
+      'leave',
+    );
+  });
+  it('leaves a user another organization linked in the meantime', () => {
+    expect(inviteCleanupDecision({ ...base, linkedAccountCount: 1 })).toBe('leave');
+    expect(inviteCleanupDecision({ ...base, linkedAccountCount: 3 })).toBe('leave');
+  });
+  it('leaves the user when the fresh check failed or the dates cannot be read', () => {
+    expect(inviteCleanupDecision({ ...base, linkedAccountCount: null })).toBe('leave');
+    expect(inviteCleanupDecision({ ...base, userCreatedAt: null })).toBe('leave');
+    expect(inviteCleanupDecision({ ...base, userCreatedAt: undefined })).toBe('leave');
+    expect(inviteCleanupDecision({ ...base, userCreatedAt: 'not a date' })).toBe('leave');
+  });
+  it('leaves a user that has confirmed or signed in', () => {
+    expect(inviteCleanupDecision({ ...base, confirmedAt: '2027-03-01T10:00:03Z' })).toBe('leave');
+    expect(inviteCleanupDecision({ ...base, lastSignInAt: '2027-03-01T10:00:03Z' })).toBe('leave');
   });
 });

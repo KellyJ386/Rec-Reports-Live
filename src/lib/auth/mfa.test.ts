@@ -14,8 +14,13 @@ describe('decideMfaStep', () => {
   it('sends admins without a factor to set one up', () => {
     expect(decideMfaStep({ aal: 'aal1', needsMfa: true, hasVerifiedFactor: false })).toBe('enroll');
   });
-  it('asks a non-admin who turned it on for the code, and leaves others alone', () => {
+  it('asks anyone with a verified factor for the code, whatever needsMfa says', () => {
+    // The database now says needsMfa = true for a voluntary factor too; the answer is the same.
+    expect(decideMfaStep({ aal: 'aal1', needsMfa: true, hasVerifiedFactor: true })).toBe('verify');
+    expect(decideMfaStep({ aal: null, needsMfa: true, hasVerifiedFactor: true })).toBe('verify');
     expect(decideMfaStep({ aal: 'aal1', needsMfa: false, hasVerifiedFactor: true })).toBe('verify');
+  });
+  it('leaves people with no factor and no admin access alone', () => {
     expect(decideMfaStep({ aal: 'aal1', needsMfa: false, hasVerifiedFactor: false })).toBe('none');
   });
   it('treats an unknown aal as not aal2', () => {

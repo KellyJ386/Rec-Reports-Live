@@ -22,8 +22,10 @@ export async function signIn(_prev: FormState, formData: FormData): Promise<Form
   });
   if (!parsed.success) return { message: firstIssue(parsed.error) };
 
-  // Counted before the password is checked, per email and per client IP, so the answer is the
-  // same whether or not the account exists. Fails closed (see rate-limit-constants.ts).
+  // Counted before the password is checked, so the answer is the same whether or not the
+  // account exists. The tight limit is per (email, client IP) pair, with looser per-email and
+  // per-IP ceilings, so knowing someone's email does not let you lock them out
+  // (see rate-limit-constants.ts). Fails closed.
   if (await rateLimited('signIn', { email: parsed.data.email })) {
     return { message: RATE_LIMITED_MESSAGE };
   }

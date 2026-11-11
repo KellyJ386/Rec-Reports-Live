@@ -101,6 +101,34 @@ export const INVITE_EMAIL_CHANGED_MESSAGE =
   'The email on this person changed after the invite. Ask a platform admin to fix the login.';
 export const INVITE_NOT_ALLOWED_MESSAGE = 'You are not allowed to create a login for this person.';
 
+export const INVITE_NOT_LINKED_MESSAGE = 'Invite sent but not linked. Try again.';
+
+/**
+ * After the accounts insert fails: may this call delete the auth user it just got back from
+ * inviteUserByEmail? Only a user this call created, and only while nothing points at it.
+ * `accounts.user_id` cascades from auth.users, so deleting a user that another organization
+ * linked in the meantime would delete THEIR login. So all of these must hold:
+ * - the user was created after this call began (a user that existed before is not ours);
+ * - it has never been confirmed or signed in;
+ * - a fresh read, taken immediately before deleting, found no account row for it.
+ * `linkedAccountCount` is null when that fresh read failed: leave the user in place.
+ * Anything unparseable counts as "not ours". Pure, so it is unit tested.
+ */
+export function inviteCleanupDecision(input: {
+  userCreatedAt: string | null | undefined;
+  callStartedAtMs: number;
+  confirmedAt: string | null | undefined;
+  lastSignInAt: string | null | undefined;
+  linkedAccountCount: number | null;
+}): 'delete' | 'leave' {
+  if (!input.userCreatedAt) return 'leave';
+  const created = Date.parse(input.userCreatedAt);
+  if (!Number.isFinite(created) || created <= input.callStartedAtMs) return 'leave';
+  if (input.confirmedAt || input.lastSignInAt) return 'leave';
+  if (input.linkedAccountCount !== 0) return 'leave';
+  return 'delete';
+}
+
 export type InviteErrorKind = 'exists' | 'rate_limited' | 'invalid_email' | 'unavailable';
 
 /** Sorts a Supabase Auth admin error into something we can say in a sentence. */

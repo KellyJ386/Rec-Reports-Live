@@ -11,7 +11,8 @@ import {
   needsAcknowledgment,
 } from '@/domains/communications';
 import { countMyOpenTasks } from '@/domains/workflows';
-import { signOut, switchOrganization } from './actions';
+import { switchOrganization } from './actions';
+import { SignOutForm } from './sign-out-form';
 
 export default async function AppHomePage() {
   await redirectIfMfaPending();
@@ -142,9 +143,7 @@ export default async function AppHomePage() {
         <Link href="/app/security">Two-step sign-in</Link>
       </p>
 
-      <form action={signOut}>
-        <button type="submit">Sign out</button>
-      </form>
+      <SignOutForm />
     </main>
   );
 }

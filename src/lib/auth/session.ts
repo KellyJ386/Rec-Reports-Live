@@ -14,7 +14,8 @@ import {
   type Membership,
   type SessionContext,
 } from './context';
-import { hasRecentAuthentication } from './recent-auth';
+import { decideRecentAuthentication } from './recent-auth';
+import { mfaStepPath } from './mfa';
 import { ACTIVE_ORG_COOKIE, selectActiveOrganization } from './active-org';
 import { enforceIdleTimeout } from './activity-server';
 import { getMfaState } from './mfa-server';
@@ -45,15 +46,24 @@ export const requireUser = cache(async (): Promise<AuthUser> => {
 /**
  * For /reset-password: the caller has a validated session that came from a recovery link or a
  * recent sign-in (the JWT's `amr` claim, checked by getClaims), else a redirect to
- * /forgot-password. Not cached: the action calls it again.
+ * /forgot-password. If the account has two-step sign-in and this session has not passed it
+ * (aal1), the person is sent to /sign-in/verify first and returned here afterwards, for a
+ * password session and for a recovery-link session alike. Not cached: the action calls it again.
  */
 export async function requireRecentAuthentication(): Promise<AuthUser> {
   const user = await requireUser();
   const supabase = await createClient();
-  const { data, error } = await supabase.auth.getClaims();
-  if (error || !hasRecentAuthentication(data?.claims, Math.floor(Date.now() / 1000))) {
-    redirect('/forgot-password');
-  }
+  const [claims, mfa] = await Promise.all([supabase.auth.getClaims(), getMfaState()]);
+  const decision = claims.error
+    ? 'restart'
+    : decideRecentAuthentication({
+        claims: claims.data?.claims,
+        mfaStep: mfa.step,
+        nowSeconds: Math.floor(Date.now() / 1000),
+      });
+  if (decision === 'verify')
+    redirect(mfaStepPath('verify', '/reset-password') ?? '/sign-in/verify');
+  if (decision === 'restart') redirect('/forgot-password');
   return user;
 }
 

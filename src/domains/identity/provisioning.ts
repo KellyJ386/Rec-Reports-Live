@@ -17,7 +17,9 @@ import {
   INVITE_ACCEPTED_MESSAGE,
   INVITE_EMAIL_CHANGED_MESSAGE,
   INVITE_EXISTS_MESSAGE,
+  INVITE_NOT_LINKED_MESSAGE,
   classifyInviteError,
+  inviteCleanupDecision,
   inviteErrorMessage,
   mayLinkInvitedUser,
   reinviteDecision,
@@ -100,6 +102,8 @@ async function firstInvite(
   email: string,
   redirectTo: string,
 ): Promise<Result<'invited'>> {
+  // The clock for "created by this call": taken before the invite is sent (see cleanup below).
+  const callStartedAtMs = Date.now();
   const invited = await admin.auth.admin.inviteUserByEmail(email, { redirectTo });
   if (invited.error || !invited.data.user) {
     console.error('provisioning: invite failed', invited.error?.code ?? '');
@@ -140,7 +144,43 @@ async function firstInvite(
   }
 
   console.error('provisioning: link failed', inserted.error.code ?? '');
-  // The auth user is brand new and unlinked (checked above): remove it so a retry starts clean.
+  return cleanUpUnlinkedUser(admin, user, callStartedAtMs);
+}
+
+/**
+ * The accounts insert failed. Delete the auth user only if this call created it and a fresh
+ * read right now shows no account row for it (see inviteCleanupDecision). Otherwise leave it and
+ * say so: a user another organization linked in the meantime must never be deleted, because
+ * accounts.user_id cascades. A tiny gap remains between the read and the delete; only a
+ * database function that deletes under a lock could close it, and the extra conditions
+ * (created by this call, never confirmed) make it very unlikely to matter.
+ */
+async function cleanUpUnlinkedUser(
+  admin: AdminClient,
+  user: {
+    id: string;
+    created_at?: string | null;
+    email_confirmed_at?: string | null;
+    confirmed_at?: string | null;
+    last_sign_in_at?: string | null;
+  },
+  callStartedAtMs: number,
+): Promise<Result<'invited'>> {
+  const fresh = await admin
+    .from('accounts')
+    .select('person_id', { count: 'exact', head: true })
+    .eq('user_id', user.id);
+  const decision = inviteCleanupDecision({
+    userCreatedAt: user.created_at,
+    callStartedAtMs,
+    confirmedAt: user.email_confirmed_at ?? user.confirmed_at,
+    lastSignInAt: user.last_sign_in_at,
+    linkedAccountCount: fresh.error ? null : (fresh.count ?? null),
+  });
+  if (decision === 'leave') {
+    console.error('provisioning: left unlinked user in place');
+    return fail(INVITE_NOT_LINKED_MESSAGE);
+  }
   const removed = await admin.auth.admin.deleteUser(user.id);
   if (removed.error) console.error('provisioning: cleanup failed', removed.error.code ?? '');
   return fail(GENERIC);

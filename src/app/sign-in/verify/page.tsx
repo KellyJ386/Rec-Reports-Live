@@ -4,7 +4,7 @@ import { requireUser } from '@/lib/auth/session';
 import { getMfaState } from '@/lib/auth/mfa-server';
 import { mfaStepPath } from '@/lib/auth/mfa';
 import { safeNextPath } from '@/lib/auth/redirect';
-import { signOut } from '@/app/app/actions';
+import { SignOutForm } from '@/app/app/sign-out-form';
 import { VerifyForm } from './form';
 
 export const metadata: Metadata = { title: 'Check your code | Rec Reports' };
@@ -25,9 +25,7 @@ export default async function VerifyPage({
       <h1>Enter your code</h1>
       <p>Open your authenticator app and type the 6-digit code for Rec Reports.</p>
       <VerifyForm next={next} />
-      <form action={signOut}>
-        <button type="submit">Sign out</button>
-      </form>
+      <SignOutForm />
     </main>
   );
 }

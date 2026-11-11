@@ -6,14 +6,8 @@ import 'server-only';
 import { headers } from 'next/headers';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getSessionSecret } from '@/lib/env';
-import { FAIL_MODE, RATE_LIMITS, type Limit, type RateBucket } from './rate-limit-constants';
-import {
-  clientIp,
-  combineOutcomes,
-  planKeys,
-  shouldBlock,
-  type LimitOutcome,
-} from './rate-limit-keys';
+import { FAIL_MODE, RATE_LIMITS, type LimitSet, type RateBucket } from './rate-limit-constants';
+import { clientIp, planKeys, runPlan, shouldBlock, type LimitOutcome } from './rate-limit-keys';
 
 async function consume(plan: {
   bucket: string;
@@ -40,16 +34,17 @@ async function consume(plan: {
 }
 
 /**
- * Counts one attempt against the bucket's limits (per email and per IP) and says whether to
- * refuse. Every applicable key is counted even when an earlier one is already over, so a
- * blocked client keeps running into the wall. The email is hashed before it leaves this file.
+ * Counts one attempt against the bucket's limits (email+IP pair, email, IP: tight to loose) and
+ * says whether to refuse. Stops at the first limit that refuses, so a blocked attacker does not
+ * use up the looser, shared counters (see rate-limit-constants.ts). The email is hashed before
+ * it leaves this file.
  * Never throws: a failure becomes the endpoint's fail mode (see FAIL_MODE).
  */
 export async function rateLimited(
   bucket: RateBucket,
   subject: { email?: string | null } = {},
 ): Promise<boolean> {
-  const limits: { email?: Limit; ip?: Limit } = RATE_LIMITS[bucket];
+  const limits: LimitSet = RATE_LIMITS[bucket];
   try {
     const secret = getSessionSecret();
     const plan = planKeys({
@@ -59,8 +54,7 @@ export async function rateLimited(
       ip: clientIp(await headers()),
       secret,
     });
-    const outcome =
-      plan.length === 0 ? 'error' : combineOutcomes(await Promise.all(plan.map(consume)));
+    const outcome = plan.length === 0 ? 'error' : await runPlan(plan, consume);
     return shouldBlock(outcome, FAIL_MODE[bucket]);
   } catch (error) {
     console.error('rate-limit: failed', error instanceof Error ? error.name : '');

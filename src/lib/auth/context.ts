@@ -50,7 +50,10 @@ export type SessionContext = {
   isPlatformAdmin: boolean;
   /** The session's assurance level from the verified JWT; null if absent. */
   aal: Aal | null;
-  /** The database says this session holds admin-tier access it is ignoring (not aal2). */
+  /**
+   * The database says this session is not aal2 and has admin-tier access or a verified factor,
+   * so it is hiding access until the code is entered (session_needs_mfa()).
+   */
   needsMfa: boolean;
   /** Which second-step screen is still owed (code or set-up), or 'none'. */
   mfaStep: MfaStep;

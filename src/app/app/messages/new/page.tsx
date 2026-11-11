@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { z } from 'zod';
 import { notFound } from 'next/navigation';
 import { ActionForm } from '@/experiences/admin/action-form';
 import { ErrorMessage } from '@/experiences/admin/ui';
@@ -26,6 +27,8 @@ export default async function NewMessagePage({
   if (!access.commsEdit) notFound();
   const sp = await searchParams;
   const search = (firstParam(sp.q) ?? '').trim().slice(0, 100);
+  const replyParsed = z.guid().safeParse(firstParam(sp.replyTo));
+  const replyTo = replyParsed.success ? replyParsed.data : undefined;
   const requested = parseRecipientIds(sp.to).filter((id) => id !== personId);
 
   // Only people the database lets this person read can be named here; the rest are dropped.
@@ -38,7 +41,7 @@ export default async function NewMessagePage({
   const matches = found && found.ok ? found.data.rows.filter((p) => p.id !== personId) : [];
 
   const href = (ids: string[], q: string) =>
-    buildHref('/app/messages/new', { to: ids.join(','), q: q || undefined });
+    buildHref('/app/messages/new', { to: ids.join(','), q: q || undefined, replyTo });
 
   return (
     <main>
@@ -59,6 +62,7 @@ export default async function NewMessagePage({
 
       <form method="get" action="/app/messages/new">
         <input type="hidden" name="to" value={chosen.join(',')} />
+        {replyTo ? <input type="hidden" name="replyTo" value={replyTo} /> : null}
         <p>
           <label>
             Find a person by name <input name="q" defaultValue={search} maxLength={100} />
@@ -86,6 +90,7 @@ export default async function NewMessagePage({
       <h2>Your message</h2>
       <ActionForm action={sendMessageAction} submitLabel="Send">
         <input type="hidden" name="to" value={chosen.join(',')} />
+        {replyTo ? <input type="hidden" name="reply_to" value={replyTo} /> : null}
         <p>
           <label>
             Message <textarea name="body" required rows={6} maxLength={4000} />

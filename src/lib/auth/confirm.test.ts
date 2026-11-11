@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseConfirmRequest } from './confirm';
+import { describeConfirm, parseConfirmRequest, sessionSwitch } from './confirm';
 
 describe('parseConfirmRequest', () => {
   it('reads a token_hash link', () => {
@@ -28,5 +28,30 @@ describe('parseConfirmRequest', () => {
     expect(parseConfirmRequest({ code: '  ' })).toBeNull();
     expect(parseConfirmRequest({ code: 'x'.repeat(513) })).toBeNull();
     expect(parseConfirmRequest({ code: ['a', 'b'] })).toMatchObject({ code: 'a' });
+  });
+});
+
+describe('describeConfirm', () => {
+  it('says what each kind of link does and never names an account', () => {
+    const recovery = describeConfirm({ kind: 'otp', tokenHash: 't', type: 'recovery', next: '/x' });
+    expect(recovery.heading).toMatch(/password/i);
+    const invite = describeConfirm({ kind: 'otp', tokenHash: 't', type: 'invite', next: '/x' });
+    expect(invite.button).toBe('Accept invite');
+    const code = describeConfirm({ kind: 'code', code: 'c', next: '/x' });
+    for (const d of [recovery, invite, code]) {
+      expect(d.lines.join(' ')).toMatch(/account it was sent to|created for you/);
+      expect(d.lines.join(' ')).toMatch(/cannot show which account/);
+      expect(d.lines.join(' ')).not.toMatch(/@/);
+    }
+  });
+});
+
+describe('sessionSwitch', () => {
+  it('is a switch only when a different person was signed in', () => {
+    expect(sessionSwitch('a', 'b')).toBe('switched');
+    expect(sessionSwitch('a', 'a')).toBe('none');
+    expect(sessionSwitch(null, 'b')).toBe('none');
+    expect(sessionSwitch(undefined, 'b')).toBe('none');
+    expect(sessionSwitch('a', null)).toBe('none');
   });
 });

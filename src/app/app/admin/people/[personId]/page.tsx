@@ -46,10 +46,17 @@ function LoginActions({
     case 'can_resend':
       return (
         <>
-          <ActionForm action={sendInviteAction} submitLabel="Resend invite">
-            <input type="hidden" name="id" value={personId} />
-            <p>Sends the link again. It only works until they have accepted.</p>
-          </ActionForm>
+          {/*
+            TODO(can_resend_person_invite): "Resend invite" is switched off. Show it only when the
+            database says so: public.can_resend_person_invite(p_organization_id uuid,
+            p_person_id uuid) returns boolean (being added in a new migration; not in
+            database.types.ts yet). Add a canResendPersonInvite() service function in
+            src/domains/identity that calls it through the caller's own session, then render the
+            ActionForm below when it is true:
+              <ActionForm action={sendInviteAction} submitLabel="Resend invite"> ...
+            Until then no control is shown. The action itself already refuses a resend, because
+            can_manage_person_account() is false for a person who has an account.
+          */}
           <ConfirmAction
             action={disableLoginAction}
             label="Disable login"

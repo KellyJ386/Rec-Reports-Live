@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { RECENT_AUTH_SECONDS, hasRecentAuthentication } from './recent-auth';
+import {
+  RECENT_AUTH_SECONDS,
+  decideRecentAuthentication,
+  hasRecentAuthentication,
+} from './recent-auth';
 
 const NOW = 1_800_000_000;
 
@@ -57,5 +61,47 @@ describe('hasRecentAuthentication', () => {
     ]) {
       expect(hasRecentAuthentication(claims, NOW), JSON.stringify(claims)).toBe(false);
     }
+  });
+});
+
+describe('decideRecentAuthentication', () => {
+  const fresh = { amr: [{ method: 'password', timestamp: NOW - 30 }] };
+  const recovery = { amr: [{ method: 'recovery', timestamp: NOW - 30 }] };
+  it('lets a fresh session with no pending second step through', () => {
+    expect(decideRecentAuthentication({ claims: fresh, mfaStep: 'none', nowSeconds: NOW })).toBe(
+      'ok',
+    );
+  });
+  it('sends a password-only session on an account with two-step sign-in to the code screen', () => {
+    expect(decideRecentAuthentication({ claims: fresh, mfaStep: 'verify', nowSeconds: NOW })).toBe(
+      'verify',
+    );
+  });
+  it('does the same for a recovery-link session, before any password form', () => {
+    expect(
+      decideRecentAuthentication({ claims: recovery, mfaStep: 'verify', nowSeconds: NOW }),
+    ).toBe('verify');
+  });
+  it('puts the second step ahead of a stale session, so the order is code, then restart', () => {
+    expect(decideRecentAuthentication({ claims: {}, mfaStep: 'verify', nowSeconds: NOW })).toBe(
+      'verify',
+    );
+    expect(decideRecentAuthentication({ claims: {}, mfaStep: 'none', nowSeconds: NOW })).toBe(
+      'restart',
+    );
+  });
+  it('does not hold up someone who has no device to verify with', () => {
+    expect(
+      decideRecentAuthentication({ claims: recovery, mfaStep: 'enroll', nowSeconds: NOW }),
+    ).toBe('ok');
+  });
+  it('still wants a recent sign-in after the code is entered (aal2 keeps the old entries)', () => {
+    expect(
+      decideRecentAuthentication({
+        claims: { amr: [...recovery.amr, { method: 'totp', timestamp: NOW - 5 }] },
+        mfaStep: 'none',
+        nowSeconds: NOW,
+      }),
+    ).toBe('ok');
   });
 });

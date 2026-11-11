@@ -5,7 +5,9 @@ import { ErrorMessage } from '@/experiences/admin/ui';
 import { requireStaffArea } from '@/experiences/employee/access';
 import { Paragraphs, StaffNav } from '@/experiences/employee/ui';
 import { formatInZone } from '@/lib/time';
-import { getMessage, markMessageRead } from '@/domains/communications';
+import { ActionForm } from '@/experiences/admin/action-form';
+import { markMessageReadAction } from '@/experiences/employee/actions/messages';
+import { getMessage } from '@/domains/communications';
 import { getPersonNames } from '@/domains/identity';
 import { getOrganizationSettings } from '@/domains/organizations';
 
@@ -28,11 +30,8 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
   if (!res.data) notFound();
   const message = res.data;
 
+  // Opening a message changes nothing: marking it read is a POST (the button below, or replying).
   const mine = message.recipients.find((r) => r.person_id === personId);
-  if (mine && mine.read_at === null) {
-    // Opening a message marks it read. A failure here is not worth stopping the page for.
-    await markMessageRead(message.id);
-  }
 
   const [names, settings] = await Promise.all([
     getPersonNames(orgId, [
@@ -60,6 +59,11 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
           .join(', ')}
       </p>
       <Paragraphs text={message.body} />
+      {mine && mine.read_at === null ? (
+        <ActionForm action={markMessageReadAction} submitLabel="Mark as read">
+          <input type="hidden" name="message_id" value={message.id} />
+        </ActionForm>
+      ) : null}
       {iAmSender ? (
         <ul>
           {message.recipients.map((r) => (
@@ -71,7 +75,9 @@ export default async function MessagePage({ params }: { params: Promise<{ id: st
         </ul>
       ) : access.commsEdit ? (
         <p>
-          <Link href={`/app/messages/new?to=${message.sender_person_id}`}>Reply</Link>
+          <Link href={`/app/messages/new?to=${message.sender_person_id}&replyTo=${message.id}`}>
+            Reply
+          </Link>
         </p>
       ) : null}
       <p>

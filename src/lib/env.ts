@@ -35,12 +35,19 @@ export const siteUrlSchema = z
   }, 'SITE_URL must use https (http is only allowed for localhost)')
   .transform((v) => new URL(v).origin);
 
+/** Minimum length for shared secrets (session signing, cron). */
+export const MIN_SECRET_LENGTH = 32;
+
 export const serverEnvSchema = z.object({
   SITE_URL: siteUrlSchema,
   NEXT_PUBLIC_SUPABASE_URL: z.url(),
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  CRON_SECRET: z.string().min(1).optional(),
+  /** Protects /api/cron/*. At least 32 characters when set (`openssl rand -base64 48`). */
+  CRON_SECRET: z
+    .string()
+    .min(MIN_SECRET_LENGTH, `CRON_SECRET must be at least ${MIN_SECRET_LENGTH} characters`)
+    .optional(),
   /**
    * Server secret that signs the idle-timeout cookie and keys the rate-limit hashes. At least
    * 32 characters (for example `openssl rand -base64 48`). Rotating it signs out nobody but
@@ -48,12 +55,21 @@ export const serverEnvSchema = z.object({
    */
   SESSION_SIGNING_SECRET: z
     .string()
-    .min(32, 'SESSION_SIGNING_SECRET must be at least 32 characters'),
+    .min(
+      MIN_SECRET_LENGTH,
+      `SESSION_SIGNING_SECRET must be at least ${MIN_SECRET_LENGTH} characters`,
+    ),
 });
 
 export const publicEnvSchema = serverEnvSchema.pick({
   NEXT_PUBLIC_SUPABASE_URL: true,
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: true,
+});
+
+/** What the service-role client needs, and nothing else. */
+export const adminEnvSchema = serverEnvSchema.pick({
+  NEXT_PUBLIC_SUPABASE_URL: true,
+  SUPABASE_SERVICE_ROLE_KEY: true,
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -73,6 +89,43 @@ export function getPublicEnv(): PublicEnv {
 /** All values, including secrets. Server only: never import this in a client component. */
 export function getServerEnv(): ServerEnv {
   return serverEnvSchema.parse(process.env);
+}
+
+/** The Supabase URL and service-role key only. Server only. */
+export function getAdminEnv(): z.infer<typeof adminEnvSchema> {
+  return adminEnvSchema.parse({
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  });
+}
+
+/**
+ * Names (never values) of the settings a production server cannot run without. Used once at
+ * startup (src/instrumentation.ts) so a bad deployment fails when it boots, not on the first
+ * sign-in. A set but malformed CRON_SECRET is also reported; an unset one is allowed (cron
+ * routes then refuse everything).
+ */
+export function missingProductionEnv(env: Record<string, string | undefined>): string[] {
+  const problems: string[] = [];
+  if (!serverEnvSchema.shape.SESSION_SIGNING_SECRET.safeParse(env.SESSION_SIGNING_SECRET).success) {
+    problems.push('SESSION_SIGNING_SECRET');
+  }
+  if (!siteUrlSchema.safeParse(env.SITE_URL).success) problems.push('SITE_URL');
+  if (
+    !serverEnvSchema.shape.SUPABASE_SERVICE_ROLE_KEY.safeParse(env.SUPABASE_SERVICE_ROLE_KEY)
+      .success
+  ) {
+    problems.push('SUPABASE_SERVICE_ROLE_KEY');
+  }
+  if (
+    !adminEnvSchema.shape.NEXT_PUBLIC_SUPABASE_URL.safeParse(env.NEXT_PUBLIC_SUPABASE_URL).success
+  ) {
+    problems.push('NEXT_PUBLIC_SUPABASE_URL');
+  }
+  if (!serverEnvSchema.shape.CRON_SECRET.safeParse(env.CRON_SECRET).success) {
+    problems.push('CRON_SECRET');
+  }
+  return problems;
 }
 
 /** The configured site origin. Server only. Throws when SITE_URL is missing or invalid. */

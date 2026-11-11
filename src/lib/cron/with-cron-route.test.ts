@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { verifyCronAuth } from './auth';
 import { withCronRoute } from './with-cron-route';
 
-const SECRET = 'a-long-random-test-secret-value';
+const SECRET = 'a-long-random-test-secret-value-0123456789';
 const request = (authorization?: string) =>
   new Request('http://localhost/api/cron/x', {
     headers: authorization === undefined ? {} : { authorization },
@@ -25,6 +25,12 @@ describe('verifyCronAuth', () => {
     expect(verifyCronAuth(`Bearer ${SECRET}`, undefined)).toBe(false);
     expect(verifyCronAuth(`Bearer ${SECRET}`, '')).toBe(false);
     expect(verifyCronAuth('Bearer ', '')).toBe(false);
+  });
+  it('refuses a secret shorter than 32 characters, even when it matches', () => {
+    const short = 'x'.repeat(31);
+    expect(verifyCronAuth(`Bearer ${short}`, short)).toBe(false);
+    const ok = 'x'.repeat(32);
+    expect(verifyCronAuth(`Bearer ${ok}`, ok)).toBe(true);
   });
 });
 

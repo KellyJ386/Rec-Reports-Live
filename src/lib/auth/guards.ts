@@ -20,11 +20,13 @@ import {
  * an RPC error or a "false" all deny (fail closed) with notFound(), which does
  * not reveal whether the organization exists.
  *
- * Two-step sign-in: the database ignores admin-tier access (and a voluntary factor is not yet
- * proven) until the session is aal2. When that is why a person has no access, refusing with
- * a 404 would be a dead end, so requireOrgMember (which every other guard calls first)
- * redirects to the second step instead: /sign-in/verify with a verified factor, /app/security
- * to set one up. This runs before any membership lookup, so it reveals nothing about orgs.
+ * Two-step sign-in: the database gives a session nothing until it is aal2 when the person
+ * either holds admin-tier access or has a verified factor (turned on voluntarily or not):
+ * session_needs_mfa() is true for both, and the app asks for the code in both cases
+ * (decideMfaStep). When that is why a person has no access, refusing with a 404 would be a
+ * dead end, so requireOrgMember (which every other guard calls first) redirects to the second
+ * step instead: /sign-in/verify with a verified factor, /app/security to set one up. This runs
+ * before any membership lookup, so it reveals nothing about orgs.
  */
 
 const hasRole = cache(

@@ -112,6 +112,16 @@ export const messageSendSchema = z.strictObject({
 const ENDPOINT = /^https:\/\/\S+$/;
 const P256DH = /^[A-Za-z0-9_-]{20,200}={0,2}$/;
 const AUTH_SECRET = /^[A-Za-z0-9_-]{8,100}={0,2}$/;
+/**
+ * A push endpoint sent by the browser on sign-out: the same shape the table accepts (https, no
+ * spaces, at most 2000 characters), else null. Anything else is ignored and sign-out goes on.
+ */
+export function parsePushEndpoint(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text.length <= 2000 && ENDPOINT.test(text) ? text : null;
+}
+
 export const pushSubscriptionSaveSchema = z.strictObject({
   organization_id: z.uuid(),
   endpoint: z

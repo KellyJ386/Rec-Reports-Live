@@ -36,3 +36,25 @@ export function hasRecentAuthentication(
     return age >= -60 && age <= maxAgeSeconds;
   });
 }
+
+export type RecentAuthDecision = 'ok' | 'verify' | 'restart';
+
+/**
+ * Whether /reset-password may show or accept the password form.
+ *
+ * - `verify`: the account has two-step sign-in (a verified factor) and this session has not
+ *   passed it. A password, or a recovery link, alone must not change the password of such an
+ *   account, so the person is sent to enter their code first (and comes back here).
+ * - `ok`: the session came from a recent recovery link or sign-in (and any second step is done).
+ * - `restart`: nothing recent enough; ask for a new link.
+ * An admin who has no device yet (step `enroll`) has no second step to pass, so they are not
+ * held up here; their email link is the proof.
+ */
+export function decideRecentAuthentication(input: {
+  claims: { amr?: unknown } | null | undefined;
+  mfaStep: 'none' | 'verify' | 'enroll';
+  nowSeconds: number;
+}): RecentAuthDecision {
+  if (input.mfaStep === 'verify') return 'verify';
+  return hasRecentAuthentication(input.claims, input.nowSeconds) ? 'ok' : 'restart';
+}

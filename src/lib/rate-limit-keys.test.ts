@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bucketName,
   clientIp,
   combineOutcomes,
+  pairKey,
+  runPlan,
+  runningOnVercel,
   emailKey,
   ipKey,
   normalizeIp,
@@ -16,23 +20,35 @@ const h = (init: Record<string, string>) => ({
 });
 
 describe('clientIp', () => {
-  it('uses the platform headers and ignores x-forwarded-for entirely', () => {
-    expect(clientIp(h({ 'x-vercel-forwarded-for': '203.0.113.7' }))).toBe('203.0.113.7');
-    expect(clientIp(h({ 'x-real-ip': '203.0.113.8' }))).toBe('203.0.113.8');
-    expect(clientIp(h({ 'x-forwarded-for': '198.51.100.1, 203.0.113.9' }))).toBeNull();
+  it('on Vercel uses the platform headers and ignores x-forwarded-for entirely', () => {
+    expect(clientIp(h({ 'x-vercel-forwarded-for': '203.0.113.7' }), true)).toBe('203.0.113.7');
+    expect(clientIp(h({ 'x-real-ip': '203.0.113.8' }), true)).toBe('203.0.113.8');
+    expect(clientIp(h({ 'x-forwarded-for': '198.51.100.1, 203.0.113.9' }), true)).toBeNull();
     expect(
-      clientIp(h({ 'x-forwarded-for': '1.1.1.1', 'x-vercel-forwarded-for': '203.0.113.7' })),
+      clientIp(h({ 'x-forwarded-for': '1.1.1.1', 'x-vercel-forwarded-for': '203.0.113.7' }), true),
     ).toBe('203.0.113.7');
+  });
+  it('off Vercel trusts no header at all, so a client cannot choose its own bucket', () => {
+    expect(clientIp(h({ 'x-vercel-forwarded-for': '203.0.113.7' }), false)).toBeNull();
+    expect(clientIp(h({ 'x-real-ip': '203.0.113.8' }), false)).toBeNull();
   });
   it('prefers x-vercel-forwarded-for over x-real-ip', () => {
     expect(
-      clientIp(h({ 'x-vercel-forwarded-for': '203.0.113.1', 'x-real-ip': '203.0.113.2' })),
+      clientIp(h({ 'x-vercel-forwarded-for': '203.0.113.1', 'x-real-ip': '203.0.113.2' }), true),
     ).toBe('203.0.113.1');
   });
   it('ignores a list or garbage in a trusted header', () => {
-    expect(clientIp(h({ 'x-real-ip': '1.1.1.1, 2.2.2.2' }))).toBeNull();
-    expect(clientIp(h({ 'x-real-ip': 'not an ip' }))).toBeNull();
-    expect(clientIp(h({}))).toBeNull();
+    expect(clientIp(h({ 'x-real-ip': '1.1.1.1, 2.2.2.2' }), true)).toBeNull();
+    expect(clientIp(h({ 'x-real-ip': 'not an ip' }), true)).toBeNull();
+    expect(clientIp(h({}), true)).toBeNull();
+  });
+});
+
+describe('runningOnVercel', () => {
+  it('is true only when VERCEL is set by the platform', () => {
+    expect(runningOnVercel({ VERCEL: '1' })).toBe(true);
+    expect(runningOnVercel({})).toBe(false);
+    expect(runningOnVercel({ VERCEL: '' })).toBe(false);
   });
 });
 
@@ -73,7 +89,7 @@ describe('keys', () => {
 });
 
 describe('planKeys', () => {
-  it('makes one row per email and one per ip with the configured numbers', () => {
+  it('makes pair, email and ip counters, tightest first, with the configured numbers', () => {
     const plan = planKeys({
       bucket: 'signIn',
       limits: RATE_LIMITS.signIn,
@@ -82,14 +98,31 @@ describe('planKeys', () => {
       secret: SECRET,
     });
     expect(plan.map((p) => [p.bucket, p.max, p.windowSeconds])).toEqual([
-      ['signIn:email', 5, 900],
-      ['signIn:ip', 20, 900],
+      ['sign-in:pair', 5, 900],
+      ['sign-in:email', 30, 900],
+      ['sign-in:ip', 100, 900],
     ]);
   });
-  it('skips the ip row when the ip is unknown, and the email row for ip-only buckets', () => {
+  it('bucket names satisfy the database check on consume_rate_limit', () => {
+    const db = /^[a-z][a-z0-9_.:-]{0,62}$/;
+    for (const bucket of Object.keys(RATE_LIMITS)) {
+      for (const kind of ['pair', 'email', 'ip'] as const) {
+        expect(bucketName(bucket, kind), bucket).toMatch(db);
+      }
+    }
+    expect(bucketName('forgotPassword', 'email')).toBe('forgot-password:email');
+  });
+  it('skips the pair and ip counters when the ip is unknown, leaving the email ceiling', () => {
     expect(
-      planKeys({ bucket: 'signIn', limits: RATE_LIMITS.signIn, email: 'a@b.co', secret: SECRET }),
-    ).toHaveLength(1);
+      planKeys({
+        bucket: 'signIn',
+        limits: RATE_LIMITS.signIn,
+        email: 'a@b.co',
+        secret: SECRET,
+      }).map((p) => p.bucket),
+    ).toEqual(['sign-in:email']);
+  });
+  it('uses only the ip counter for ip-only buckets', () => {
     expect(
       planKeys({
         bucket: 'confirmLink',
@@ -98,7 +131,55 @@ describe('planKeys', () => {
         ip: '203.0.113.7',
         secret: SECRET,
       }).map((p) => p.bucket),
-    ).toEqual(['confirmLink:ip']);
+    ).toEqual(['confirm-link:ip']);
+  });
+  it('the pair key differs per ip, so an attacker pair is not the owner pair', () => {
+    const attacker = pairKey('Owner@Example.com', '198.51.100.9', SECRET);
+    const owner = pairKey('owner@example.com ', '203.0.113.7', SECRET);
+    expect(attacker).not.toBe(owner);
+    expect(pairKey('Owner@Example.com', '203.0.113.7', SECRET)).toBe(owner);
+    expect(attacker).not.toBe(emailKey('owner@example.com', SECRET));
+  });
+  it('sign-in numbers: tight pair, loose email ceiling, shared-network ip ceiling', () => {
+    expect(RATE_LIMITS.signIn.pair.max).toBeLessThan(RATE_LIMITS.signIn.email.max);
+    expect(RATE_LIMITS.signIn.email.max).toBeLessThan(RATE_LIMITS.signIn.ip.max);
+    expect(RATE_LIMITS.signIn.ip.max).toBeGreaterThanOrEqual(100);
+  });
+});
+
+describe('runPlan', () => {
+  const plan = planKeys({
+    bucket: 'signIn',
+    limits: RATE_LIMITS.signIn,
+    email: 'a@b.co',
+    ip: '203.0.113.7',
+    secret: SECRET,
+  });
+  it('consumes everything when nothing is limited', async () => {
+    const seen: string[] = [];
+    const outcome = await runPlan(plan, async (p) => {
+      seen.push(p.bucket);
+      return 'allowed';
+    });
+    expect(outcome).toBe('allowed');
+    expect(seen).toEqual(['sign-in:pair', 'sign-in:email', 'sign-in:ip']);
+  });
+  it('stops at a limited pair so a blocked attacker cannot push up the email ceiling', async () => {
+    const seen: string[] = [];
+    const outcome = await runPlan(plan, async (p) => {
+      seen.push(p.bucket);
+      return p.bucket.endsWith(':pair') ? 'limited' : 'allowed';
+    });
+    expect(outcome).toBe('limited');
+    expect(seen).toEqual(['sign-in:pair']);
+  });
+  it('keeps going after an error, and a later limit still wins', async () => {
+    expect(
+      await runPlan(plan, async (p) => (p.bucket.endsWith(':pair') ? 'error' : 'allowed')),
+    ).toBe('error');
+    expect(await runPlan(plan, async (p) => (p.bucket.endsWith(':ip') ? 'limited' : 'error'))).toBe(
+      'limited',
+    );
   });
 });
 

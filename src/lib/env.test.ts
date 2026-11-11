@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { deliveryEnvSchema, publicEnvSchema, serverEnvSchema, siteUrlSchema } from './env';
+import {
+  adminEnvSchema,
+  deliveryEnvSchema,
+  missingProductionEnv,
+  publicEnvSchema,
+  serverEnvSchema,
+  siteUrlSchema,
+} from './env';
 
 const valid = {
   SITE_URL: 'https://app.example.com',
@@ -45,6 +52,46 @@ describe('serverEnvSchema', () => {
       'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
       'NEXT_PUBLIC_SUPABASE_URL',
     ]);
+  });
+});
+
+describe('CRON_SECRET', () => {
+  it('must be at least 32 characters when set', () => {
+    expect(serverEnvSchema.safeParse({ ...valid, CRON_SECRET: 'x'.repeat(31) }).success).toBe(
+      false,
+    );
+    expect(serverEnvSchema.safeParse({ ...valid, CRON_SECRET: 'x'.repeat(32) }).success).toBe(true);
+  });
+});
+
+describe('adminEnvSchema', () => {
+  it('needs only the Supabase URL and the service-role key', () => {
+    const parsed = adminEnvSchema.parse({
+      NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-placeholder',
+    });
+    expect(Object.keys(parsed).sort()).toEqual([
+      'NEXT_PUBLIC_SUPABASE_URL',
+      'SUPABASE_SERVICE_ROLE_KEY',
+    ]);
+    expect(adminEnvSchema.safeParse({ NEXT_PUBLIC_SUPABASE_URL: 'https://x.co' }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('missingProductionEnv', () => {
+  it('is empty for a complete environment, with CRON_SECRET unset allowed', () => {
+    expect(missingProductionEnv(valid)).toEqual([]);
+  });
+  it('names each missing or malformed setting, never a value', () => {
+    expect(
+      missingProductionEnv({ ...valid, SESSION_SIGNING_SECRET: 'short', SITE_URL: undefined }),
+    ).toEqual(['SESSION_SIGNING_SECRET', 'SITE_URL']);
+    expect(missingProductionEnv({ ...valid, SUPABASE_SERVICE_ROLE_KEY: '' })).toEqual([
+      'SUPABASE_SERVICE_ROLE_KEY',
+    ]);
+    expect(missingProductionEnv({ ...valid, CRON_SECRET: 'short' })).toEqual(['CRON_SECRET']);
   });
 });
 

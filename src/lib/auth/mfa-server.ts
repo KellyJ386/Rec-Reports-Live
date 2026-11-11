@@ -10,7 +10,10 @@ import { decideMfaStep, mfaStepPath, normalizeAal, type Aal, type MfaStep } from
 
 export type MfaState = {
   aal: Aal | null;
-  /** The database's answer: admin-tier access it is ignoring because the session is not aal2. */
+  /**
+   * The database's answer (session_needs_mfa()): the session is not aal2 and the person holds
+   * admin-tier access or a verified factor, so the database is giving it no access yet.
+   */
   needsMfa: boolean;
   step: MfaStep;
 };

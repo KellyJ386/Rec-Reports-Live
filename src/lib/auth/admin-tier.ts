@@ -4,9 +4,12 @@
 export const ADMIN_TIER_RANK = 80;
 
 /**
- * `needsMfa` is the database's own answer (session_needs_mfa(): admin-tier access that it is
- * ignoring because the session is not aal2). Once the session is aal2 the database stops
- * ignoring it, so platform admin status and the caller's own effective ranks show it directly.
+ * `needsMfa` is the database's own answer (session_needs_mfa(): the session is not aal2 and the
+ * person holds admin-tier access OR has a verified factor). At aal1 the two cannot be told apart
+ * (the database hides the assignments that would show it), so a true answer counts as admin tier
+ * here: that only ever shortens an aal1 session's idle time, never lengthens it. Once the session
+ * is aal2 the database stops hiding anything, so platform admin status and the caller's own
+ * effective ranks decide.
  */
 export function isAdminTier(input: {
   needsMfa: boolean;

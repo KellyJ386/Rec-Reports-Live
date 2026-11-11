@@ -1,4 +1,4 @@
-import { verifyCronAuth } from './auth';
+import { MIN_CRON_SECRET_LENGTH, verifyCronAuth } from './auth';
 import { consoleLogger, errorClass, type Logger } from './error-class';
 
 /** What a job reports back: counts only. No ids, payloads or personal data. */
@@ -33,9 +33,13 @@ export function withCronRoute(
 
   return async function handler(request: Request): Promise<Response> {
     const secret = getSecret();
-    if (!secret) {
+    if (!secret || secret.length < MIN_CRON_SECRET_LENGTH) {
       // Refuse, and say why in our own log only (the caller learns nothing about config).
-      log({ event: 'cron.refused', job: name, reason: 'secret_not_configured' });
+      log({
+        event: 'cron.refused',
+        job: name,
+        reason: secret ? 'secret_too_short' : 'secret_not_configured',
+      });
       return json({ error: 'unauthorized' }, 401);
     }
     if (!verifyCronAuth(request.headers.get('authorization'), secret)) {

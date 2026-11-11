@@ -15,8 +15,10 @@ export async function requestPasswordReset(
   const parsed = forgotPasswordSchema.safeParse({ email: formData.get('email') });
   if (!parsed.success) return { message: firstIssue(parsed.error) };
 
-  // Limited per email and per IP. Limited, or a limiter fault (fails closed), gets the same
-  // neutral message and no email, so the response never shows the limit or the account.
+  // Limited per email (the abuse is mail sent to one address) and per IP. These counters are
+  // separate from sign-in's, so nobody can be locked out of signing in through this form.
+  // Limited, or a limiter fault (fails closed), gets the same neutral message and no email, so
+  // the response never shows the limit or the account.
   if (await rateLimited('forgotPassword', { email: parsed.data.email })) {
     return { ok: true, message: NEUTRAL };
   }

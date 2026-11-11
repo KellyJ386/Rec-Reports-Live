@@ -1,7 +1,7 @@
 import 'server-only';
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './database.types';
-import { getServerEnv } from '@/lib/env';
+import { getAdminEnv } from '@/lib/env';
 
 /**
  * Service-role client. It bypasses RLS.
@@ -11,7 +11,9 @@ import { getServerEnv } from '@/lib/env';
  * See docs/ARCHITECTURE.md and docs/SECURITY.md.
  */
 export function createAdminClient() {
-  const env = getServerEnv();
+  // Only the two values it needs, so an unrelated missing setting (SITE_URL, a cron secret)
+  // cannot make this client, and so the rate limiter and sign-in, fail.
+  const env = getAdminEnv();
   return createClient<Database>(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });

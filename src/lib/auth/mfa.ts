@@ -14,10 +14,15 @@ export function normalizeAal(value: unknown): Aal | null {
 }
 
 /**
+ * The database's rule: a session that is not aal2 gets no access at all when the person holds
+ * admin-tier access or has any verified factor (session_needs_mfa() is true for either). This
+ * is the app's half, and it does not depend on that flag for the code screen:
  * - aal2: nothing more to do.
  * - Otherwise, a verified factor means "enter the code" for everyone, admin or not (a person who
- *   turned two-step sign-in on must not be able to skip it with just a password).
- * - No verified factor but the database says the session needs one: set it up first.
+ *   turned two-step sign-in on must not be able to skip it with just a password). `needsMfa` is
+ *   true for these people too, so it cannot be read as "this person is an admin".
+ * - No verified factor but the database says the session needs one: only admin-tier access can
+ *   cause that, so set a device up first.
  */
 export function decideMfaStep(input: {
   aal: Aal | null;

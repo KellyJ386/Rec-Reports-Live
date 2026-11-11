@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { parseConfirmRequest } from '@/lib/auth/confirm';
+import { describeConfirm, parseConfirmRequest } from '@/lib/auth/confirm';
+import { createClient } from '@/lib/supabase/server';
 import { confirmLink } from './actions';
 
 // Rendering this page verifies nothing. The button below posts to a Server Action.
@@ -29,10 +30,24 @@ export default async function ConfirmPage({
     );
   }
 
+  const about = describeConfirm(request);
+  // Only the browser's own current session is shown here (never anything from the link).
+  const supabase = await createClient();
+  const current = (await supabase.auth.getUser()).data.user;
+
   return (
     <main>
-      <h1>Continue</h1>
-      <p>Press the button to finish. Nothing happens until you do.</p>
+      <h1>{about.heading}</h1>
+      {about.lines.map((line) => (
+        <p key={line}>{line}</p>
+      ))}
+      <p>Nothing happens until you press the button. Only continue if you asked for this email.</p>
+      {current ? (
+        <p role="alert">
+          You are signed in{current.email ? ` as ${current.email}` : ''} in this browser. If you
+          continue, we sign you out of that account first.
+        </p>
+      ) : null}
       <form action={confirmLink}>
         {request.kind === 'otp' ? (
           <>
@@ -43,7 +58,7 @@ export default async function ConfirmPage({
           <input type="hidden" name="code" value={request.code} />
         )}
         <input type="hidden" name="next" value={request.next} />
-        <button type="submit">Continue</button>
+        <button type="submit">{about.button}</button>
       </form>
     </main>
   );
