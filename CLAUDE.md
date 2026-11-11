@@ -53,8 +53,16 @@ RinkReports Pro (`KellyJ386/Rink-Reports-Pro`) is a reference. It is not a depen
 
 After every migration: regenerate `src/lib/supabase/database.types.ts`, add pgTAP allow and deny tests, and update `docs/DATA_MODEL.md` and `docs/SECURITY.md`.
 
-## Phase 1 status and open items
+## Status and open items
 
-Built: scaffold and CI, tenancy and access schema with RLS, audit log, sign-in and password reset, plain admin screens, mock seed. See `docs/SECURITY.md` for the access model.
+Built (Phases 1 and 2): scaffold and CI, tenancy and access schema with RLS, audit log, sign-in and password reset, two-step sign-in (TOTP) for the admin tier, 30-minute admin idle sign-out, rate limits on sign-in and password reset, invites, plain admin screens, mock seed, the outbox and job runner, tasks and workflow rules, notices, messages, and notifications by email and web push. See `docs/SECURITY.md` for the access model and the Phase 2 review fixes.
 
-Not built yet (required by `docs/SECURITY.md` before any real data): MFA for admins, 30-minute admin idle sign-out, app-level rate limits on sign-in and password reset, the invite flow that creates logins, and retention for the audit log.
+Nothing has run on hosted Supabase, GitHub CI or Vercel yet. Everything was tested on a local Postgres 16 stand-in (`scripts/db/test-local.sh`) and with unit tests against in-memory ports. Treat the first run on real Supabase as untested ground.
+
+Open items:
+
+- Retention for the audit log (required by `docs/SECURITY.md` before any real data).
+- Revoke `service_role` direct reads on tables now that the worker uses the `worker_*` functions.
+- Hosted Supabase Auth settings must be set by hand to match `supabase/config.toml`: sign-ups off, 12-character passwords, the exact redirect URL, Auth rate limits, 15-minute JWT, email templates.
+- Writes can be refused with SQLSTATE `PT429` (per-person write limits). Map it through `src/lib/db-errors.ts`.
+- Private messages and their metadata are hidden from every admin, platform admins included. Keep message content out of the outbox, notifications and the audit log.
