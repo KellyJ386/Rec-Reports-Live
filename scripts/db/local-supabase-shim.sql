@@ -54,8 +54,9 @@ create table auth.mfa_factors (
   friendly_name text,
   factor_type text not null default 'totp' check (factor_type in ('totp', 'webauthn', 'phone')),
   status text not null check (status in ('unverified', 'verified')),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  -- No defaults, as on hosted Supabase: an insert must give both times.
+  created_at timestamptz not null,
+  updated_at timestamptz not null
 );
 create index mfa_factors_user_id_idx on auth.mfa_factors (user_id);
 

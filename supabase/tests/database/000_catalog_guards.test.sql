@@ -229,7 +229,8 @@ select is((select coalesce(string_agg(n.nspname || '.' || c.relname, ', ' order 
              and case when c.relkind = 'S' then has_sequence_privilege('anon', c.oid, 'usage,select,update') end),
   '', 'anon has no sequence privilege in public or private');
 
-select is((select coalesce(string_agg(sig, ', ' order by sig), '') from gf where has_function_privilege('anon', oid, 'execute')),
+select is((select coalesce(string_agg(g.sig || ' [owner ' || p.proowner::regrole::text || ', acl ' || coalesce(p.proacl::text, 'default') || ']', ', ' order by g.sig), '')
+           from gf g join pg_proc p on p.oid = g.oid where has_function_privilege('anon', g.oid, 'execute')),
   '', 'anon (and PUBLIC through it) cannot execute any function in public or private');
 
 select is((select coalesce(string_agg(g.nspname || '.' || g.relname, ', ' order by g.relname), '') from gt g
@@ -249,7 +250,7 @@ select is((select coalesce(string_agg(n.nspname || '.' || c.relname, ', ' order 
   '', 'PUBLIC is granted nothing on any sequence in public or private');
 
 -- A null proacl means the default ACL, which gives PUBLIC execute.
-select is((select coalesce(string_agg(g.sig, ', ' order by g.sig), '') from gf g
+select is((select coalesce(string_agg(g.sig || ' [owner ' || p.proowner::regrole::text || ', acl ' || coalesce(p.proacl::text, 'default') || ']', ', ' order by g.sig), '') from gf g
            join pg_proc p on p.oid = g.oid, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
            where a.grantee = 0),
   '', 'PUBLIC cannot execute any function in public or private (no function left on the default ACL)');

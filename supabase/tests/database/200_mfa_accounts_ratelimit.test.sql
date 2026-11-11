@@ -213,7 +213,7 @@ select is(pg_temp.f($$select public.session_needs_mfa()$$), 'false', 'no factor,
 select is(pg_temp.f($$select public.has_permission(pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'tasks', 'view')$$), 'true', 'no factor, aal1: staff A1 can view tasks');
 select pg_temp.act_as('postgres');
 -- an unverified factor (enrolment started, not finished) changes nothing
-insert into auth.mfa_factors (id, user_id, factor_type, status) values (pg_temp.id('f_unver'), pg_temp.id('u_staff_a1'), 'totp', 'unverified');
+insert into auth.mfa_factors (id, user_id, factor_type, status, created_at, updated_at) values (pg_temp.id('f_unver'), pg_temp.id('u_staff_a1'), 'totp', 'unverified', now(), now());
 select pg_temp.act_as('u_staff_a1', 'aal1');
 select is(pg_temp.f($$select count(*) from public.auth_org_ids()$$), '1', 'unverified factor, aal1: still a member');
 select is(pg_temp.f($$select public.session_needs_mfa()$$), 'false', 'unverified factor, aal1: no second step is needed');
@@ -253,7 +253,7 @@ select is(pg_temp.lvl('u_staff_a1', 'aal1', 'p_staff_a1'), 'null', 'staff A1 at 
 select isnt(pg_temp.lvl('u_staff_a1', 'aal2', 'p_staff_a1'), 'null', 'twin: at aal2 they have one');
 select isnt(pg_temp.lvl('u_manager_a1', 'aal1', 'p_manager_a1'), 'null', 'twin: manager A1 with no factor has a level at aal1');
 -- other factor types and a removed factor
-insert into auth.mfa_factors (id, user_id, factor_type, status) values (pg_temp.id('f_web'), pg_temp.id('u_staff_a2'), 'webauthn', 'verified');
+insert into auth.mfa_factors (id, user_id, factor_type, status, created_at, updated_at) values (pg_temp.id('f_web'), pg_temp.id('u_staff_a2'), 'webauthn', 'verified', now(), now());
 select pg_temp.act_as('u_staff_a2', 'aal1');
 select is(pg_temp.f($$select count(*) from public.auth_org_ids()$$), '0', 'a verified webauthn factor counts the same');
 select pg_temp.act_as('postgres');
@@ -271,10 +271,26 @@ select is(has_function_privilege('authenticated', 'private.user_has_verified_mfa
 select is(has_function_privilege('anon', 'private.user_has_verified_mfa(uuid)', 'execute'), false, 'anon cannot call it either');
 select is(has_table_privilege('authenticated', 'auth.mfa_factors', 'select'), false, 'and authenticated cannot read the factor table');
 -- no factor table at all: the helper treats it as "no factor" (checked as the owner against a dropped table in this transaction)
-drop table auth.mfa_factors;
-select is(private.user_has_verified_mfa(pg_temp.id('u_staff_a1')), false, 'with no factor table the answer is false (nothing can be verified)');
+-- On hosted Supabase the table belongs to supabase_auth_admin and the test role cannot drop it; there the
+-- two checks below are skipped or assert the unchanged state, and the stand-in run covers the missing-table path.
+create temp table mfa_drop (ok boolean);
+do $$
+begin
+  begin
+    drop table auth.mfa_factors cascade;
+    insert into mfa_drop values (true);
+  exception when insufficient_privilege then
+    insert into mfa_drop values (false);
+  end;
+end
+$$;
+select ok as mfa_dropped from mfa_drop \gset
+select case when :'mfa_dropped'::boolean
+  then is(private.user_has_verified_mfa(pg_temp.id('u_staff_a1')), false, 'with no factor table the answer is false (nothing can be verified)')
+  else skip('the factor table cannot be dropped by this role', 1) end;
 select pg_temp.act_as('u_staff_a1', 'aal1');
-select is(pg_temp.f($$select count(*) from public.auth_org_ids()$$), '1', 'and staff A1 is a member at aal1 again');
+select is(pg_temp.f($$select count(*) from public.auth_org_ids()$$), case when :'mfa_dropped'::boolean then '1' else '0' end,
+  'staff A1 is a member at aal1 again only when the factor table is gone');
 select pg_temp.act_as('postgres');
 
 -- ===========================================================================
