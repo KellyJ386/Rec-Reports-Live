@@ -6,7 +6,7 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(26 + 30 * (select count(*)::int from pg_class c
+select plan(46 + 30 * (select count(*)::int from pg_class c
   where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p') and (c.relname = 'organizations'
     or exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'organization_id' and not a.attisdropped)))
   + (select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')));
@@ -32,13 +32,19 @@ create function pg_temp.sys_role(p_key text) returns uuid language sql stable se
 as $$ select id from public.roles where organization_id is null and key = p_key $$;
 grant execute on function pg_temp.sys_role(text) to public;
 
--- Switch identity: act_as('u_staff_a1') = authenticated with that user's JWT; act_as('anon');
--- act_as('postgres') (or null) goes back to the owner.
-create function pg_temp.act_as(p_who text) returns void language plpgsql as $$
+-- Switch identity: act_as('u_staff_a1') = authenticated with that user's JWT at assurance level aal2
+-- (a verified second factor, which the admin tier needs); act_as('u_orgadmin_a', 'aal1') = first factor
+-- only; act_as('u_orgadmin_a', 'none') = a JWT with no aal claim (counts as aal1);
+-- act_as('anon'); act_as('service_role') = the server key (no user); act_as('postgres') (or null) goes back to the owner.
+-- act_as_service('u_staff_a1') = a service_role connection that carries a USER's JWT (what the worker functions must refuse).
+create function pg_temp.act_as(p_who text, p_aal text default 'aal2') returns void language plpgsql as $$
 begin
   if p_who is null or p_who = 'postgres' then
     perform set_config('role', 'none', true);
     perform set_config('request.jwt.claims', '', true);
+  elsif p_who = 'service_role' then
+    perform set_config('role', 'none', true); perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+    perform set_config('role', 'service_role', true);
   elsif p_who = 'anon' then
     perform set_config('role', 'none', true);
     perform set_config('request.jwt.claims', '{"role":"anon"}', true);
@@ -46,11 +52,20 @@ begin
   else
     perform set_config('role', 'none', true);
     perform set_config('request.jwt.claims',
-      json_build_object('sub', pg_temp.id(p_who), 'role', 'authenticated')::text, true);
+      (jsonb_build_object('sub', pg_temp.id(p_who), 'role', 'authenticated')
+        || case when p_aal = 'none' then '{}'::jsonb else jsonb_build_object('aal', p_aal) end)::text, true);
     perform set_config('role', 'authenticated', true);
   end if;
 end $$;
-grant execute on function pg_temp.act_as(text) to public;
+grant execute on function pg_temp.act_as(text, text) to public;
+create function pg_temp.act_as_service(p_who text) returns void language plpgsql as $$
+begin
+  perform set_config('role', 'none', true);
+  perform set_config('request.jwt.claims',
+    jsonb_build_object('sub', pg_temp.id(p_who), 'role', 'service_role', 'aal', 'aal2')::text, true);
+  perform set_config('role', 'service_role', true);
+end $$;
+grant execute on function pg_temp.act_as_service(text) to public;
 
 -- Generic probes, all SECURITY INVOKER so RLS and grants apply to the current role.
 -- cnt: rows visible in public.<table> matching a where clause; -1 if the role has no privilege.
@@ -156,6 +171,66 @@ insert into public.person_job_titles (id, organization_id, person_id, job_title_
   (pg_temp.id('pjt_b'), pg_temp.id('org_b'), pg_temp.id('p_staff_b1'), pg_temp.id('jt_b'), null);
 -- END SHARED FIXTURE
 
+-- BEGIN PHASE 2 ROWS: byte-identical in every file that uses it (020, 050).
+-- Phase 2 rows: one row in each of the 15 Phase 2 tables, in both organizations, written
+-- with the owner's rights because the API roles cannot write most of them (and they are what the
+-- generated tests below are about). Org A: staff A1 sends a message to manager A1 and owns the
+-- notification, push subscription and preference. Org B: staff B1 sends to staff B2 (a person with no
+-- login), so org admin B is neither sender nor recipient.
+insert into public.people (id, organization_id, first_name, last_name) values
+  (pg_temp.id('p_staff_b2'), pg_temp.id('org_b'), 'Bao', 'StaffB2');
+insert into public.outbox_events (id, organization_id, location_id, type, entity_table, entity_id, correlation_id, payload)
+select pg_temp.id('ev_' || v.k), pg_temp.id(v.org), pg_temp.id(v.loc), 'task.created', 'tasks', pg_temp.id('task_' || v.k),
+       pg_temp.id('ev_' || v.k), jsonb_build_object('task_id', pg_temp.id('task_' || v.k))
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.outbox_event_handlers (event_id, handler, organization_id)
+select pg_temp.id('ev_' || v.k), 'tasks', pg_temp.id(v.org) from (values ('a', 'org_a'), ('b', 'org_b')) v (k, org);
+insert into public.task_templates (id, organization_id, location_id, title)
+select pg_temp.id('tpl_' || v.k), pg_temp.id(v.org), pg_temp.id(v.loc), 'Template ' || v.k
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.workflow_rules (id, organization_id, location_id, name, event_type, task_template_id)
+select pg_temp.id('rule_' || v.k), pg_temp.id(v.org), pg_temp.id(v.loc), 'Rule ' || v.k, 'booking.confirmed', pg_temp.id('tpl_' || v.k)
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.tasks (id, organization_id, location_id, title, assigned_person_id)
+select pg_temp.id('task_' || v.k), pg_temp.id(v.org), pg_temp.id(v.loc), 'Task ' || v.k, pg_temp.id(v.person)
+from (values ('a', 'org_a', 'loc_a1', 'p_staff_a1'), ('b', 'org_b', 'loc_b1', 'p_staff_b1')) v (k, org, loc, person);
+insert into public.task_events (organization_id, location_id, task_id, kind)
+select pg_temp.id(v.org), pg_temp.id(v.loc), pg_temp.id('task_' || v.k), 'created'
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.notices (id, organization_id, location_id, title, body)
+select pg_temp.id('notice_' || v.k), pg_temp.id(v.org), null, 'Notice ' || v.k, 'Body ' || v.k
+from (values ('a', 'org_a'), ('b', 'org_b')) v (k, org);
+insert into public.notice_audiences (id, organization_id, notice_id)
+select pg_temp.id('aud_' || v.k), pg_temp.id(v.org), pg_temp.id('notice_' || v.k) from (values ('a', 'org_a'), ('b', 'org_b')) v (k, org);
+insert into public.acknowledgments (organization_id, notice_id, person_id)
+select pg_temp.id(v.org), pg_temp.id('notice_' || v.k), pg_temp.id(v.person)
+from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
+insert into public.messages (id, organization_id, sender_person_id, body)
+select pg_temp.id('msg_' || v.k), pg_temp.id(v.org), pg_temp.id(v.sender), 'Private body ' || v.k
+from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, sender);
+insert into public.message_recipients (organization_id, message_id, person_id)
+select pg_temp.id(v.org), pg_temp.id('msg_' || v.k), pg_temp.id(v.rcpt)
+from (values ('a', 'org_a', 'p_manager_a1'), ('b', 'org_b', 'p_staff_b2')) v (k, org, rcpt);
+insert into public.notifications (id, organization_id, person_id, kind, title, source_event_id)
+select pg_temp.id('notif_' || v.k), pg_temp.id(v.org), pg_temp.id(v.person), 'task.created', 'Notification ' || v.k, pg_temp.id('ev_' || v.k)
+from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
+insert into public.notification_deliveries (organization_id, notification_id, person_id, channel, status, sent_at)
+select pg_temp.id(v.org), pg_temp.id('notif_' || v.k), pg_temp.id(v.person), 'in_app', 'sent', now()
+from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
+insert into public.push_subscriptions (organization_id, person_id, endpoint, p256dh, auth_secret)
+select pg_temp.id(v.org), pg_temp.id(v.person), 'https://push.example.test/' || v.k, 'BPfixturefixturefixturefixture' || v.k, 'fixtureauth' || v.k
+from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
+insert into public.notification_preferences (organization_id, person_id, channel, enabled)
+select pg_temp.id(v.org), pg_temp.id(v.person), 'email', false from (values ('org_a', 'p_staff_a1'), ('org_b', 'p_staff_b1')) v (org, person);
+
+-- END PHASE 2 ROWS
+-- Tables that are private by design: only the person they belong to (sender/recipient/owner) reads them.
+-- No role of the organization (not even an organization admin) and no platform admin can.
+create temp view private_tt as
+  select t.relname from (values ('messages'), ('message_recipients'), ('notifications'), ('notification_deliveries'),
+                                ('push_subscriptions'), ('notification_preferences')) t (relname);
+grant select on private_tt to public;
+
 -- Tenant tables, readable by every role through a temp view.
 create temp view tt as
   select c.relname from pg_class c
@@ -164,6 +239,7 @@ create temp view tt as
          or exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'organization_id' and not a.attisdropped));
 grant select on tt to public;
 
+-- BEGIN GENERIC HELPERS: byte-identical in every file that uses them (020, 090).
 -- where-clause selecting one organization's rows (organizations has no organization_id: its id is the org)
 create function pg_temp.orgf(p_table text, p_org uuid) returns text language sql immutable as $$
   select (case when p_table = 'organizations' then 'id' else 'organization_id' end) || ' = ' || quote_literal(p_org)
@@ -209,9 +285,16 @@ begin
   execute format('select md5(coalesce(string_agg(to_jsonb(x)::text, '','' order by to_jsonb(x)::text), '''')) from public.%I x', p_table) into h;
   return h;
 end $f$;
+-- try_msg: 'ok', or 'SQLSTATE message' (to prove two refusals are word for word the same).
+create function pg_temp.try_msg(p_sql text) returns text language plpgsql as $$
+begin
+  execute p_sql;
+  return 'ok';
+exception when others then return sqlstate || ' ' || sqlerrm;
+end $$;
 grant execute on function pg_temp.orgf(text, uuid), pg_temp.clone_of(text, uuid), pg_temp.try_insert(text, uuid),
-  pg_temp.upd(text, uuid), pg_temp.table_hash(text) to public;
-
+  pg_temp.upd(text, uuid), pg_temp.table_hash(text), pg_temp.try_msg(text) to public;
+-- END GENERIC HELPERS
 -- Snapshot of every table, to prove denied writes changed nothing.
 create temp table snap as
   select c.relname, pg_temp.table_hash(c.relname) as h from pg_class c
@@ -278,16 +361,29 @@ from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in (
 -- deny tests above cannot be passing because the fixture or the actors are broken.
 
 select pg_temp.act_as('u_orgadmin_a');
-select cmp_ok(pg_temp.cnt(t.relname, pg_temp.orgf(t.relname, pg_temp.id('org_a'))), '>', 0::bigint, 'org admin A reads org A rows in ' || t.relname) from pg_temp.tt t order by t.relname;
-select cmp_ok(pg_temp.upd(t, pg_temp.id('org_a')), '>', 0::bigint, 'org admin A can update org A rows in ' || t) from (values ('organizations'),('organization_settings'),('locations'),('space_kinds'),('spaces'),('space_hours'),('space_closures'),('roles'),('role_default_permissions'),('people'),('accounts'),('user_permissions'),('job_titles')) v (t) order by t;
+select cmp_ok(pg_temp.cnt(t.relname, pg_temp.orgf(t.relname, pg_temp.id('org_a'))), '>', 0::bigint, 'org admin A reads org A rows in ' || t.relname) from pg_temp.tt t where t.relname not in (select relname from pg_temp.private_tt) order by t.relname;
+select is(pg_temp.cnt(t.relname, pg_temp.orgf(t.relname, pg_temp.id('org_a'))), 0::bigint, 'org admin A reads no org A rows in ' || t.relname || ' (private by design)') from pg_temp.private_tt t order by t.relname;
+select cmp_ok(pg_temp.upd(t, pg_temp.id('org_a')), '>', 0::bigint, 'org admin A can update org A rows in ' || t) from (values ('organizations'),('organization_settings'),('locations'),('space_kinds'),('spaces'),('space_hours'),('space_closures'),('roles'),('role_default_permissions'),('people'),('accounts'),('user_permissions'),('job_titles'),('task_templates'),('workflow_rules'),('notices')) v (t) order by t;
 
 select pg_temp.act_as('u_orgadmin_b');
-select cmp_ok(pg_temp.cnt(t.relname, pg_temp.orgf(t.relname, pg_temp.id('org_b'))), '>', 0::bigint, 'org admin B reads org B rows in ' || t.relname) from pg_temp.tt t order by t.relname;
-select cmp_ok(pg_temp.upd(t, pg_temp.id('org_b')), '>', 0::bigint, 'org admin B can update org B rows in ' || t) from (values ('organizations'),('organization_settings'),('locations'),('space_kinds'),('spaces'),('space_hours'),('space_closures'),('roles'),('role_default_permissions'),('people'),('accounts'),('user_permissions'),('job_titles')) v (t) order by t;
+select cmp_ok(pg_temp.cnt(t.relname, pg_temp.orgf(t.relname, pg_temp.id('org_b'))), '>', 0::bigint, 'org admin B reads org B rows in ' || t.relname) from pg_temp.tt t where t.relname not in (select relname from pg_temp.private_tt) order by t.relname;
+select is(pg_temp.cnt(t.relname, pg_temp.orgf(t.relname, pg_temp.id('org_b'))), 0::bigint, 'org admin B reads no org B rows in ' || t.relname || ' (private by design)') from pg_temp.private_tt t order by t.relname;
+select cmp_ok(pg_temp.upd(t, pg_temp.id('org_b')), '>', 0::bigint, 'org admin B can update org B rows in ' || t) from (values ('organizations'),('organization_settings'),('locations'),('space_kinds'),('spaces'),('space_hours'),('space_closures'),('roles'),('role_default_permissions'),('people'),('accounts'),('user_permissions'),('job_titles'),('task_templates'),('workflow_rules'),('notices')) v (t) order by t;
 
 select pg_temp.act_as('u_platform');
-select cmp_ok(pg_temp.cnt(t.relname, pg_temp.orgf(t.relname, pg_temp.id('org_a'))), '>', 0::bigint, 'platform admin reads org A rows in ' || t.relname) from pg_temp.tt t order by t.relname;
-select cmp_ok(pg_temp.cnt(t.relname, pg_temp.orgf(t.relname, pg_temp.id('org_b'))), '>', 0::bigint, 'platform admin reads org B rows in ' || t.relname) from pg_temp.tt t order by t.relname;
+select cmp_ok(pg_temp.cnt(t.relname, pg_temp.orgf(t.relname, pg_temp.id('org_a'))), '>', 0::bigint, 'platform admin reads org A rows in ' || t.relname) from pg_temp.tt t where t.relname not in (select relname from pg_temp.private_tt) order by t.relname;
+select is(pg_temp.cnt(t.relname, pg_temp.orgf(t.relname, pg_temp.id('org_a'))), 0::bigint, 'platform admin reads no org A rows in ' || t.relname || ' (private by design)') from pg_temp.private_tt t order by t.relname;
+select cmp_ok(pg_temp.cnt(t.relname, pg_temp.orgf(t.relname, pg_temp.id('org_b'))), '>', 0::bigint, 'platform admin reads org B rows in ' || t.relname) from pg_temp.tt t where t.relname not in (select relname from pg_temp.private_tt) order by t.relname;
+select is(pg_temp.cnt(t.relname, pg_temp.orgf(t.relname, pg_temp.id('org_b'))), 0::bigint, 'platform admin reads no org B rows in ' || t.relname || ' (private by design)') from pg_temp.private_tt t order by t.relname;
+
+-- Private by design, with allowed twins: the people the rows belong to read them; admins do not.
+select pg_temp.act_as('u_locadmin_a1');
+select is(pg_temp.cnt(t.relname, pg_temp.orgf(t.relname, pg_temp.id('org_a'))), 0::bigint, 'location admin A1 reads no org A rows in ' || t.relname || ' (private by design)') from pg_temp.private_tt t order by t.relname;
+select pg_temp.act_as('u_staff_a1');
+select cmp_ok(pg_temp.cnt(t, 'true'), '=', 1::bigint, 'staff A1 reads their own row in ' || t) from (values ('messages'),('message_recipients'),('notifications'),('notification_deliveries'),('push_subscriptions'),('notification_preferences')) v (t) order by t;
+select pg_temp.act_as('u_manager_a1');
+select is(pg_temp.cnt('messages'), 1::bigint, 'manager A1 reads the message they received');
+select is(pg_temp.cnt('message_recipients'), 1::bigint, 'manager A1 reads their own recipient row');
 
 select pg_temp.act_as('postgres');
 select * from finish();

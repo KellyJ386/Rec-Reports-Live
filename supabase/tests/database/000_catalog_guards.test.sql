@@ -19,7 +19,7 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(34);
+select plan(38);
 
 -- Guarded objects: ordinary relations and functions in public/private that do
 -- not belong to an extension.
@@ -167,11 +167,37 @@ select is((select coalesce(string_agg(x.c || '(' || x.k || ')', ', '), '') from 
            where not exists (select 1 from gfk f where f.child = x.c and f.child_cols = x.k and f.parent = 'roles')),
   '', 'the composite-key exception allowlist (role_id -> roles) has no stale entries');
 
+-- Allowlist, with reasons. The parent's location_id is nullable and null means "every location of
+-- the organization", so a child cannot pair (id, organization_id, location_id) with it. In each case
+-- the location rule is enforced by a trigger or function instead (and tested in the Phase 2 files):
+--   tasks.task_template_id -> task_templates, workflow_rules.task_template_id -> task_templates:
+--     a template with location_id null serves every location; a location template only serves rules
+--     of the same location (private.tg_workflow_rules_validate), and match_workflow_rules checks it again.
+--   tasks.source_rule_id -> workflow_rules: a rule with location_id null fires at any location; the task's
+--     location is the event's location (create_task_from_event via match_workflow_rules).
+--   notice_audiences.notice_id -> notices: a notice with location_id null is organization-wide and its audience
+--     rows may name any location; a location notice can only target its own location
+--     (private.can_edit_notice_audience, the audience insert policy).
 select is((select coalesce(string_agg(f.child || '(' || f.child_cols || ') -> ' || f.parent, ', ' order by f.child, f.child_cols), '')
            from gfk f
            where pg_temp.has_col(f.conrelid, 'location_id') and pg_temp.has_col(f.confrelid, 'location_id')
-             and not pg_temp.fk_pairs(f.conkey, f.confkey, f.conrelid, f.confrelid, 'location_id')),
-  '', 'a foreign key from a location-scoped table to a location-scoped parent also pairs location_id (a child stays in its parent''s location)');
+             and not pg_temp.fk_pairs(f.conkey, f.confkey, f.conrelid, f.confrelid, 'location_id')
+             and (f.child, f.child_cols, f.parent) not in (
+               ('tasks', 'task_template_id,organization_id', 'task_templates'),
+               ('tasks', 'source_rule_id,organization_id', 'workflow_rules'),
+               ('workflow_rules', 'task_template_id,organization_id', 'task_templates'),
+               ('notice_audiences', 'notice_id,organization_id', 'notices'))),
+  '', 'a foreign key from a location-scoped table to a location-scoped parent also pairs location_id (a child stays in its parent''s location), except the reviewed "organization or location" parents');
+
+select is((select coalesce(string_agg(x.c || '(' || x.k || ') -> ' || x.p, ', '), '') from (values
+             ('tasks', 'task_template_id,organization_id', 'task_templates'),
+             ('tasks', 'source_rule_id,organization_id', 'workflow_rules'),
+             ('workflow_rules', 'task_template_id,organization_id', 'task_templates'),
+             ('notice_audiences', 'notice_id,organization_id', 'notices')) x (c, k, p)
+           where not exists (select 1 from gfk f where f.child = x.c and f.child_cols = x.k and f.parent = x.p
+                             and pg_temp.has_col(f.conrelid, 'location_id') and pg_temp.has_col(f.confrelid, 'location_id')
+                             and not pg_temp.fk_pairs(f.conkey, f.confkey, f.conrelid, f.confrelid, 'location_id'))),
+  '', 'the location-pairing exception allowlist (organization-or-location parents) has no stale entries');
 
 -- ---------------------------------------------------------------------------
 -- Every foreign key has an index whose leading columns cover it (partial indexes count).
@@ -255,16 +281,61 @@ select is((select coalesce(string_agg(sig, ', ' order by sig), '') from gf
              and proname not in ('is_platform_admin', 'auth_org_ids', 'auth_location_ids', 'current_person_id', 'has_role',
                                  'actor_rank', 'effective_permission', 'has_permission',
                                  'create_person_with_assignment', 'update_own_profile',
-                                 'person_effective_permission', 'replace_role_assignment')),
+                                 'person_effective_permission', 'replace_role_assignment',
+                                 -- Phase 2 (auth_hardening, outbox, tasks, communications, notifications)
+                                 'session_needs_mfa', 'can_manage_person_account', 'retry_dead_outbox_event',
+                                 'create_task', 'start_task', 'complete_task', 'reopen_task', 'assign_task',
+                                 'cancel_task', 'add_task_comment', 'publish_notice', 'archive_notice',
+                                 'acknowledge_notice', 'send_message', 'mark_message_read',
+                                 'mark_notifications_read', 'mark_all_notifications_read',
+                                 'save_push_subscription', 'delete_push_subscription')),
   '', 'only the reviewed SECURITY DEFINER functions in public are callable by authenticated through /rpc (add new ones here on purpose)');
 
 select is((select coalesce(string_agg(x, ', '), '') from unnest(array[
              'is_platform_admin', 'auth_org_ids', 'auth_location_ids', 'current_person_id', 'has_role',
              'actor_rank', 'effective_permission', 'has_permission',
              'create_person_with_assignment', 'update_own_profile',
-             'person_effective_permission', 'replace_role_assignment']) x
+             'person_effective_permission', 'replace_role_assignment',
+             'session_needs_mfa', 'can_manage_person_account', 'retry_dead_outbox_event',
+             'create_task', 'start_task', 'complete_task', 'reopen_task', 'assign_task',
+             'cancel_task', 'add_task_comment', 'publish_notice', 'archive_notice',
+             'acknowledge_notice', 'send_message', 'mark_message_read',
+             'mark_notifications_read', 'mark_all_notifications_read',
+             'save_push_subscription', 'delete_push_subscription']) x
            where not exists (select 1 from gf where gf.nspname = 'public' and gf.proname = x and gf.prosecdef)),
   '', 'the /rpc allowlist has no stale entries');
+
+-- Functions documented as service_role only (the worker API, the rate limiter, the fan-out helpers).
+-- Each must be executable by service_role and by neither authenticated nor anon (a user with the
+-- anon key must not be able to call them through /rpc). 090 also proves each one refuses a caller
+-- that carries a user JWT. A new service-only function has to be added here on purpose.
+create temp table svc_only (schema_name text, proname text);
+insert into svc_only values
+  ('public', 'consume_rate_limit'), ('private', 'purge_rate_limit_counters'),
+  ('public', 'claim_outbox_events'), ('public', 'complete_outbox_event'), ('public', 'fail_outbox_event'),
+  ('public', 'record_outbox_handler'), ('public', 'outbox_handlers_done'),
+  ('public', 'match_workflow_rules'), ('public', 'create_task_from_event'), ('public', 'emit_overdue_task_events'),
+  ('public', 'create_notification'), ('public', 'notice_audience_person_ids'), ('public', 'task_recipient_person_ids'),
+  ('public', 'claim_notification_deliveries'), ('public', 'complete_notification_delivery'),
+  ('public', 'fail_notification_delivery'), ('public', 'skip_notification_delivery'), ('public', 'disable_push_subscription');
+
+select is((select coalesce(string_agg(g.sig, ', ' order by g.sig), '') from gf g
+           join svc_only s on s.schema_name = g.nspname and s.proname = g.proname
+           where has_function_privilege('authenticated', g.oid, 'execute') or has_function_privilege('anon', g.oid, 'execute')
+              or not has_function_privilege('service_role', g.oid, 'execute')),
+  '', 'every documented service_role-only function is executable by service_role and by neither authenticated nor anon');
+
+select is((select coalesce(string_agg(s.schema_name || '.' || s.proname, ', '), '') from svc_only s
+           where not exists (select 1 from gf g where g.nspname = s.schema_name and g.proname = s.proname)),
+  '', 'the service_role-only list has no stale entries');
+
+select is((select coalesce(string_agg(g.sig, ', ' order by g.sig), '') from gf g
+           where g.nspname in ('public', 'private') and has_function_privilege('service_role', g.oid, 'execute')
+             and not has_function_privilege('authenticated', g.oid, 'execute')
+             -- skip implicit constructors of the time_range multirange type (internal dependency on the type)
+             and not exists (select 1 from pg_depend d where d.objid = g.oid and d.deptype = 'i')
+             and not exists (select 1 from svc_only s where s.schema_name = g.nspname and s.proname = g.proname)),
+  '', 'every function that service_role can execute but authenticated cannot is on the documented service_role-only list');
 
 -- ---------------------------------------------------------------------------
 -- TRUNCATE

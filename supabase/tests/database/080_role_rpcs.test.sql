@@ -25,13 +25,19 @@ create function pg_temp.sys_role(p_key text) returns uuid language sql stable se
 as $$ select id from public.roles where organization_id is null and key = p_key $$;
 grant execute on function pg_temp.sys_role(text) to public;
 
--- Switch identity: act_as('u_staff_a1') = authenticated with that user's JWT; act_as('anon');
--- act_as('postgres') (or null) goes back to the owner.
-create function pg_temp.act_as(p_who text) returns void language plpgsql as $$
+-- Switch identity: act_as('u_staff_a1') = authenticated with that user's JWT at assurance level aal2
+-- (a verified second factor, which the admin tier needs); act_as('u_orgadmin_a', 'aal1') = first factor
+-- only; act_as('u_orgadmin_a', 'none') = a JWT with no aal claim (counts as aal1);
+-- act_as('anon'); act_as('service_role') = the server key (no user); act_as('postgres') (or null) goes back to the owner.
+-- act_as_service('u_staff_a1') = a service_role connection that carries a USER's JWT (what the worker functions must refuse).
+create function pg_temp.act_as(p_who text, p_aal text default 'aal2') returns void language plpgsql as $$
 begin
   if p_who is null or p_who = 'postgres' then
     perform set_config('role', 'none', true);
     perform set_config('request.jwt.claims', '', true);
+  elsif p_who = 'service_role' then
+    perform set_config('role', 'none', true); perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+    perform set_config('role', 'service_role', true);
   elsif p_who = 'anon' then
     perform set_config('role', 'none', true);
     perform set_config('request.jwt.claims', '{"role":"anon"}', true);
@@ -39,11 +45,20 @@ begin
   else
     perform set_config('role', 'none', true);
     perform set_config('request.jwt.claims',
-      json_build_object('sub', pg_temp.id(p_who), 'role', 'authenticated')::text, true);
+      (jsonb_build_object('sub', pg_temp.id(p_who), 'role', 'authenticated')
+        || case when p_aal = 'none' then '{}'::jsonb else jsonb_build_object('aal', p_aal) end)::text, true);
     perform set_config('role', 'authenticated', true);
   end if;
 end $$;
-grant execute on function pg_temp.act_as(text) to public;
+grant execute on function pg_temp.act_as(text, text) to public;
+create function pg_temp.act_as_service(p_who text) returns void language plpgsql as $$
+begin
+  perform set_config('role', 'none', true);
+  perform set_config('request.jwt.claims',
+    jsonb_build_object('sub', pg_temp.id(p_who), 'role', 'service_role', 'aal', 'aal2')::text, true);
+  perform set_config('role', 'service_role', true);
+end $$;
+grant execute on function pg_temp.act_as_service(text) to public;
 
 -- Generic probes, all SECURITY INVOKER so RLS and grants apply to the current role.
 -- cnt: rows visible in public.<table> matching a where clause; -1 if the role has no privilege.
