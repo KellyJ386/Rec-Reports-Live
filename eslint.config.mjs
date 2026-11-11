@@ -2,7 +2,7 @@ import { defineConfig, globalIgnores } from 'eslint/config';
 import nextVitals from 'eslint-config-next/core-web-vitals';
 import nextTs from 'eslint-config-next/typescript';
 
-const domains = ['identity', 'organizations', 'resources', 'audit'];
+const domains = ['identity', 'organizations', 'resources', 'audit', 'workflows', 'communications'];
 
 const deepDomainImport = (message) => ({
   group: ['**/domains/*/**'],

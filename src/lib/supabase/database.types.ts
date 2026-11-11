@@ -65,6 +65,58 @@ export type Database = {
           },
         ]
       }
+      acknowledgments: {
+        Row: {
+          id: string
+          organization_id: string
+          notice_id: string
+          person_id: string
+          acknowledged_at: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          notice_id: string
+          person_id: string
+          acknowledged_at?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          notice_id?: string
+          person_id?: string
+          acknowledged_at?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "acknowledgments_notice_id_organization_id_fkey"
+            columns: ["notice_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "notices"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "acknowledgments_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "acknowledgments_person_id_organization_id_fkey"
+            columns: ["person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
       audit_log: {
         Row: {
           id: number
@@ -84,7 +136,7 @@ export type Database = {
           changed_columns: string[] | null
         }
         Insert: {
-          id: number
+          id?: number
           occurred_at?: string
           transaction_id?: number
           organization_id?: string | null
@@ -202,6 +254,100 @@ export type Database = {
           },
         ]
       }
+      message_recipients: {
+        Row: {
+          id: string
+          organization_id: string
+          message_id: string
+          person_id: string
+          read_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          message_id: string
+          person_id: string
+          read_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          message_id?: string
+          person_id?: string
+          read_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_recipients_message_id_organization_id_fkey"
+            columns: ["message_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "message_recipients_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "message_recipients_person_id_organization_id_fkey"
+            columns: ["person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      messages: {
+        Row: {
+          id: string
+          organization_id: string
+          sender_person_id: string
+          body: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          sender_person_id: string
+          body: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          sender_person_id?: string
+          body?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_sender_person_id_organization_id_fkey"
+            columns: ["sender_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
       modules: {
         Row: {
           key: string
@@ -225,6 +371,341 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+        ]
+      }
+      notice_audiences: {
+        Row: {
+          id: string
+          organization_id: string
+          notice_id: string
+          location_id: string | null
+          job_title_id: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          notice_id: string
+          location_id?: string | null
+          job_title_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          notice_id?: string
+          location_id?: string | null
+          job_title_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notice_audiences_job_title_id_organization_id_fkey"
+            columns: ["job_title_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "job_titles"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "notice_audiences_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "notice_audiences_notice_id_organization_id_fkey"
+            columns: ["notice_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "notices"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "notice_audiences_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notices: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string | null
+          title: string
+          body: string
+          urgency: string
+          requires_acknowledgment: boolean
+          publish_at: string | null
+          expires_at: string | null
+          status: string
+          author_person_id: string | null
+          published_at: string | null
+          published_by_person_id: string | null
+          archived_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id?: string | null
+          title: string
+          body: string
+          urgency?: string
+          requires_acknowledgment?: boolean
+          publish_at?: string | null
+          expires_at?: string | null
+          status?: string
+          author_person_id?: string | null
+          published_at?: string | null
+          published_by_person_id?: string | null
+          archived_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string | null
+          title?: string
+          body?: string
+          urgency?: string
+          requires_acknowledgment?: boolean
+          publish_at?: string | null
+          expires_at?: string | null
+          status?: string
+          author_person_id?: string | null
+          published_at?: string | null
+          published_by_person_id?: string | null
+          archived_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notices_author_person_id_organization_id_fkey"
+            columns: ["author_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "notices_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "notices_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notices_published_by_person_id_organization_id_fkey"
+            columns: ["published_by_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      notification_deliveries: {
+        Row: {
+          id: string
+          organization_id: string
+          notification_id: string
+          person_id: string
+          channel: string
+          status: string
+          attempts: number
+          next_attempt_at: string
+          locked_at: string | null
+          locked_by: string | null
+          lock_expires_at: string | null
+          provider_message_id: string | null
+          last_error: string | null
+          sent_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          notification_id: string
+          person_id: string
+          channel: string
+          status?: string
+          attempts?: number
+          next_attempt_at?: string
+          locked_at?: string | null
+          locked_by?: string | null
+          lock_expires_at?: string | null
+          provider_message_id?: string | null
+          last_error?: string | null
+          sent_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          notification_id?: string
+          person_id?: string
+          channel?: string
+          status?: string
+          attempts?: number
+          next_attempt_at?: string
+          locked_at?: string | null
+          locked_by?: string | null
+          lock_expires_at?: string | null
+          provider_message_id?: string | null
+          last_error?: string | null
+          sent_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notification_deliveries_notification_id_organization_id_fkey"
+            columns: ["notification_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "notifications"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "notification_deliveries_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notification_deliveries_person_id_organization_id_fkey"
+            columns: ["person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      notification_preferences: {
+        Row: {
+          id: string
+          organization_id: string
+          person_id: string
+          channel: string
+          enabled: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          person_id: string
+          channel: string
+          enabled?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          person_id?: string
+          channel?: string
+          enabled?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notification_preferences_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notification_preferences_person_id_organization_id_fkey"
+            columns: ["person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      notifications: {
+        Row: {
+          id: string
+          organization_id: string
+          person_id: string
+          kind: string
+          title: string
+          body: string | null
+          link_path: string | null
+          source_table: string | null
+          source_id: string | null
+          source_event_id: string
+          urgency: string
+          read_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          person_id: string
+          kind: string
+          title: string
+          body?: string | null
+          link_path?: string | null
+          source_table?: string | null
+          source_id?: string | null
+          source_event_id: string
+          urgency?: string
+          read_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          person_id?: string
+          kind?: string
+          title?: string
+          body?: string | null
+          link_path?: string | null
+          source_table?: string | null
+          source_id?: string | null
+          source_event_id?: string
+          urgency?: string
+          read_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notifications_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_person_id_organization_id_fkey"
+            columns: ["person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
         ]
       }
       organization_settings: {
@@ -288,6 +769,142 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+        ]
+      }
+      outbox_event_handlers: {
+        Row: {
+          event_id: string
+          handler: string
+          organization_id: string
+          completed_at: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          event_id: string
+          handler: string
+          organization_id: string
+          completed_at?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          event_id?: string
+          handler?: string
+          organization_id?: string
+          completed_at?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "outbox_event_handlers_event_id_organization_id_fkey"
+            columns: ["event_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "outbox_events"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "outbox_event_handlers_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      outbox_events: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string | null
+          type: string
+          schema_version: number
+          entity_table: string
+          entity_id: string
+          payload: Json
+          correlation_id: string
+          status: string
+          attempts: number
+          next_attempt_at: string
+          locked_at: string | null
+          locked_by: string | null
+          lock_expires_at: string | null
+          last_error: string | null
+          processed_at: string | null
+          retried_at: string | null
+          retried_by_person_id: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id?: string | null
+          type: string
+          schema_version?: number
+          entity_table: string
+          entity_id: string
+          payload?: Json
+          correlation_id: string
+          status?: string
+          attempts?: number
+          next_attempt_at?: string
+          locked_at?: string | null
+          locked_by?: string | null
+          lock_expires_at?: string | null
+          last_error?: string | null
+          processed_at?: string | null
+          retried_at?: string | null
+          retried_by_person_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string | null
+          type?: string
+          schema_version?: number
+          entity_table?: string
+          entity_id?: string
+          payload?: Json
+          correlation_id?: string
+          status?: string
+          attempts?: number
+          next_attempt_at?: string
+          locked_at?: string | null
+          locked_by?: string | null
+          lock_expires_at?: string | null
+          last_error?: string | null
+          processed_at?: string | null
+          retried_at?: string | null
+          retried_by_person_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "outbox_events_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "outbox_events_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "outbox_events_retried_by_person_id_organization_id_fkey"
+            columns: ["retried_by_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
         ]
       }
       people: {
@@ -416,6 +1033,63 @@ export type Database = {
           created_at?: string
         }
         Relationships: [
+        ]
+      }
+      push_subscriptions: {
+        Row: {
+          id: string
+          organization_id: string
+          person_id: string
+          endpoint: string
+          p256dh: string
+          auth_secret: string
+          user_agent: string | null
+          last_used_at: string | null
+          disabled_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          person_id: string
+          endpoint: string
+          p256dh: string
+          auth_secret: string
+          user_agent?: string | null
+          last_used_at?: string | null
+          disabled_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          person_id?: string
+          endpoint?: string
+          p256dh?: string
+          auth_secret?: string
+          user_agent?: string | null
+          last_used_at?: string | null
+          disabled_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_subscriptions_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "push_subscriptions_person_id_organization_id_fkey"
+            columns: ["person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
         ]
       }
       role_assignments: {
@@ -810,6 +1484,313 @@ export type Database = {
           },
         ]
       }
+      task_events: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string
+          task_id: string
+          kind: string
+          actor_person_id: string | null
+          from_status: string | null
+          to_status: string | null
+          assigned_person_id: string | null
+          assigned_job_title_id: string | null
+          body: string | null
+          source_event_id: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id: string
+          task_id: string
+          kind: string
+          actor_person_id?: string | null
+          from_status?: string | null
+          to_status?: string | null
+          assigned_person_id?: string | null
+          assigned_job_title_id?: string | null
+          body?: string | null
+          source_event_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string
+          task_id?: string
+          kind?: string
+          actor_person_id?: string | null
+          from_status?: string | null
+          to_status?: string | null
+          assigned_person_id?: string | null
+          assigned_job_title_id?: string | null
+          body?: string | null
+          source_event_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_events_actor_person_id_organization_id_fkey"
+            columns: ["actor_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "task_events_assigned_job_title_id_organization_id_fkey"
+            columns: ["assigned_job_title_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "job_titles"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "task_events_assigned_person_id_organization_id_fkey"
+            columns: ["assigned_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "task_events_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "task_events_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_events_task_id_organization_id_location_id_fkey"
+            columns: ["task_id", "organization_id", "location_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id", "organization_id", "location_id"]
+          },
+        ]
+      }
+      task_templates: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string | null
+          title: string
+          instructions: string | null
+          default_priority: string
+          due_offset_minutes: number | null
+          assign_to: string
+          assign_job_title_id: string | null
+          assign_person_id: string | null
+          archived_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id?: string | null
+          title: string
+          instructions?: string | null
+          default_priority?: string
+          due_offset_minutes?: number | null
+          assign_to?: string
+          assign_job_title_id?: string | null
+          assign_person_id?: string | null
+          archived_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string | null
+          title?: string
+          instructions?: string | null
+          default_priority?: string
+          due_offset_minutes?: number | null
+          assign_to?: string
+          assign_job_title_id?: string | null
+          assign_person_id?: string | null
+          archived_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_templates_assign_job_title_id_organization_id_fkey"
+            columns: ["assign_job_title_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "job_titles"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "task_templates_assign_person_id_organization_id_fkey"
+            columns: ["assign_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "task_templates_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "task_templates_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tasks: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string
+          space_id: string | null
+          title: string
+          instructions: string | null
+          status: string
+          priority: string
+          due_at: string | null
+          assigned_person_id: string | null
+          assigned_job_title_id: string | null
+          created_by_person_id: string | null
+          completed_by_person_id: string | null
+          completed_at: string | null
+          cancelled_at: string | null
+          source_event_id: string | null
+          source_rule_id: string | null
+          task_template_id: string | null
+          overdue_emitted_for: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id: string
+          space_id?: string | null
+          title: string
+          instructions?: string | null
+          status?: string
+          priority?: string
+          due_at?: string | null
+          assigned_person_id?: string | null
+          assigned_job_title_id?: string | null
+          created_by_person_id?: string | null
+          completed_by_person_id?: string | null
+          completed_at?: string | null
+          cancelled_at?: string | null
+          source_event_id?: string | null
+          source_rule_id?: string | null
+          task_template_id?: string | null
+          overdue_emitted_for?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string
+          space_id?: string | null
+          title?: string
+          instructions?: string | null
+          status?: string
+          priority?: string
+          due_at?: string | null
+          assigned_person_id?: string | null
+          assigned_job_title_id?: string | null
+          created_by_person_id?: string | null
+          completed_by_person_id?: string | null
+          completed_at?: string | null
+          cancelled_at?: string | null
+          source_event_id?: string | null
+          source_rule_id?: string | null
+          task_template_id?: string | null
+          overdue_emitted_for?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tasks_assigned_job_title_id_organization_id_fkey"
+            columns: ["assigned_job_title_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "job_titles"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "tasks_assigned_person_id_organization_id_fkey"
+            columns: ["assigned_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "tasks_completed_by_person_id_organization_id_fkey"
+            columns: ["completed_by_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "tasks_created_by_person_id_organization_id_fkey"
+            columns: ["created_by_person_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "tasks_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "tasks_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_source_rule_id_organization_id_fkey"
+            columns: ["source_rule_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "workflow_rules"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "tasks_space_id_organization_id_location_id_fkey"
+            columns: ["space_id", "organization_id", "location_id"]
+            isOneToOne: false
+            referencedRelation: "spaces"
+            referencedColumns: ["id", "organization_id", "location_id"]
+          },
+          {
+            foreignKeyName: "tasks_task_template_id_organization_id_fkey"
+            columns: ["task_template_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "task_templates"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
       user_permissions: {
         Row: {
           id: string
@@ -872,77 +1853,125 @@ export type Database = {
           },
         ]
       }
+      workflow_rules: {
+        Row: {
+          id: string
+          organization_id: string
+          location_id: string | null
+          name: string
+          event_type: string
+          condition: Json
+          task_template_id: string
+          enabled: boolean
+          archived_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          location_id?: string | null
+          name: string
+          event_type: string
+          condition?: Json
+          task_template_id: string
+          enabled?: boolean
+          archived_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          location_id?: string | null
+          name?: string
+          event_type?: string
+          condition?: Json
+          task_template_id?: string
+          enabled?: boolean
+          archived_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workflow_rules_location_id_organization_id_fkey"
+            columns: ["location_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "workflow_rules_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workflow_rules_task_template_id_organization_id_fkey"
+            columns: ["task_template_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "task_templates"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      actor_rank: {
-        Args: { p_organization_id: string; p_location_id: string | null }
-        Returns: number
-      }
-      auth_location_ids: {
+      is_platform_admin: {
         Args: never
-        Returns: string[]
+        Returns: boolean
       }
       auth_org_ids: {
         Args: never
         Returns: string[]
       }
+      auth_location_ids: {
+        Args: never
+        Returns: string[]
+      }
       current_person_id: {
         Args: { p_organization_id: string }
-        Returns: string
+        Returns: string | null
+      }
+      has_role: {
+        Args: { p_organization_id: string; p_location_id: string | null; p_role_key: string }
+        Returns: boolean
+      }
+      actor_rank: {
+        Args: { p_organization_id: string; p_location_id: string | null }
+        Returns: number
       }
       effective_permission: {
         Args: { p_organization_id: string; p_location_id: string | null; p_module_key: string }
         Returns: Database["public"]["Enums"]["permission_level"]
       }
       has_permission: {
-        Args: {
-          p_organization_id: string
-          p_location_id: string | null
-          p_module_key: string
-          p_min_level: Database["public"]["Enums"]["permission_level"]
-        }
-        Returns: boolean
-      }
-      has_role: {
-        Args: { p_organization_id: string; p_location_id: string | null; p_role_key: string }
-        Returns: boolean
-      }
-      is_platform_admin: {
-        Args: never
-        Returns: boolean
-      }
-      can_manage_person_account: {
-        Args: { p_organization_id: string; p_person_id: string }
-        Returns: boolean
-      }
-      consume_rate_limit: {
-        Args: { p_bucket: string; p_key: string; p_max: number; p_window_seconds: number }
+        Args: { p_organization_id: string; p_location_id: string | null; p_module_key: string; p_min_level: Database["public"]["Enums"]["permission_level"] }
         Returns: boolean
       }
       create_person_with_assignment: {
-        Args: {
-          p_organization_id: string
-          p_first_name: string
-          p_last_name: string
-          p_role_id: string
-          p_location_id: string | null
-          p_preferred_name?: string | null
-          p_email?: string | null
-          p_phone?: string | null
-          p_employee_number?: string | null
-        }
+        Args: { p_organization_id: string; p_first_name: string; p_last_name: string; p_role_id: string; p_location_id: string | null; p_preferred_name?: string | null; p_email?: string | null; p_phone?: string | null; p_employee_number?: string | null }
+        Returns: string
+      }
+      update_own_profile: {
+        Args: { p_organization_id: string; p_preferred_name: string | null; p_phone: string | null }
+        Returns: string
+      }
+      time_range: {
+        Args: { arg1: string; arg2: string } | { arg1: string; arg2: string; arg3: string }
+        Returns: string
+      }
+      time_multirange: {
+        Args: never | { arg1: string } | { arg1: string[] }
         Returns: string
       }
       person_effective_permission: {
-        Args: {
-          p_organization_id: string
-          p_person_id: string
-          p_location_id: string | null
-          p_module_key: string
-        }
+        Args: { p_organization_id: string; p_person_id: string; p_location_id: string | null; p_module_key: string }
         Returns: Database["public"]["Enums"]["permission_level"]
       }
       replace_role_assignment: {
@@ -953,9 +1982,145 @@ export type Database = {
         Args: never
         Returns: boolean
       }
-      update_own_profile: {
-        Args: { p_organization_id: string; p_preferred_name: string | null; p_phone: string | null }
+      consume_rate_limit: {
+        Args: { p_bucket: string; p_key: string; p_max: number; p_window_seconds: number }
+        Returns: boolean
+      }
+      can_manage_person_account: {
+        Args: { p_organization_id: string; p_person_id: string }
+        Returns: boolean
+      }
+      claim_outbox_events: {
+        Args: { p_worker: string; p_limit: number; p_lock_seconds: number }
+        Returns: Database["public"]["Tables"]["outbox_events"]["Row"][]
+      }
+      complete_outbox_event: {
+        Args: { p_id: string; p_worker: string }
+        Returns: boolean
+      }
+      fail_outbox_event: {
+        Args: { p_id: string; p_worker: string; p_error: string }
+        Returns: string | null
+      }
+      record_outbox_handler: {
+        Args: { p_event_id: string; p_handler: string }
+        Returns: boolean
+      }
+      outbox_handlers_done: {
+        Args: { p_event_id: string }
+        Returns: string[]
+      }
+      retry_dead_outbox_event: {
+        Args: { p_id: string }
+        Returns: undefined
+      }
+      create_task: {
+        Args: { p_organization_id: string; p_location_id: string; p_title: string; p_instructions?: string | null; p_due_at?: string | null; p_priority?: string; p_space_id?: string | null; p_assigned_person_id?: string | null; p_assigned_job_title_id?: string | null }
         Returns: string
+      }
+      start_task: {
+        Args: { p_task_id: string }
+        Returns: undefined
+      }
+      complete_task: {
+        Args: { p_task_id: string; p_note?: string | null }
+        Returns: undefined
+      }
+      reopen_task: {
+        Args: { p_task_id: string; p_reason?: string | null }
+        Returns: undefined
+      }
+      assign_task: {
+        Args: { p_task_id: string; p_person_id: string | null; p_job_title_id: string | null }
+        Returns: undefined
+      }
+      cancel_task: {
+        Args: { p_task_id: string; p_reason?: string | null }
+        Returns: undefined
+      }
+      add_task_comment: {
+        Args: { p_task_id: string; p_body: string }
+        Returns: string
+      }
+      match_workflow_rules: {
+        Args: { p_event_id: string }
+        Returns: { rule_id: string; task_template_id: string }[]
+      }
+      create_task_from_event: {
+        Args: { p_event_id: string; p_rule_id: string }
+        Returns: string | null
+      }
+      emit_overdue_task_events: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
+      publish_notice: {
+        Args: { p_notice_id: string; p_publish_at?: string | null }
+        Returns: undefined
+      }
+      archive_notice: {
+        Args: { p_notice_id: string }
+        Returns: undefined
+      }
+      acknowledge_notice: {
+        Args: { p_notice_id: string }
+        Returns: string
+      }
+      send_message: {
+        Args: { p_organization_id: string; p_recipient_person_ids: string[]; p_body: string }
+        Returns: string
+      }
+      mark_message_read: {
+        Args: { p_message_id: string }
+        Returns: undefined
+      }
+      create_notification: {
+        Args: { p_event_id: string; p_person_id: string; p_kind: string; p_title: string; p_body?: string | null; p_link_path?: string | null; p_urgency?: string | null }
+        Returns: string | null
+      }
+      notice_audience_person_ids: {
+        Args: { p_notice_id: string }
+        Returns: string[]
+      }
+      task_recipient_person_ids: {
+        Args: { p_task_id: string }
+        Returns: string[]
+      }
+      claim_notification_deliveries: {
+        Args: { p_worker: string; p_limit: number; p_lock_seconds: number; p_channel?: string | null }
+        Returns: Database["public"]["Tables"]["notification_deliveries"]["Row"][]
+      }
+      complete_notification_delivery: {
+        Args: { p_id: string; p_worker: string; p_provider_message_id?: string | null }
+        Returns: boolean
+      }
+      fail_notification_delivery: {
+        Args: { p_id: string; p_worker: string; p_error: string; p_permanent?: boolean }
+        Returns: string | null
+      }
+      skip_notification_delivery: {
+        Args: { p_id: string; p_worker: string; p_reason: string }
+        Returns: boolean
+      }
+      disable_push_subscription: {
+        Args: { p_id: string }
+        Returns: boolean
+      }
+      mark_notifications_read: {
+        Args: { p_notification_ids: string[] }
+        Returns: number
+      }
+      mark_all_notifications_read: {
+        Args: { p_organization_id: string }
+        Returns: number
+      }
+      save_push_subscription: {
+        Args: { p_organization_id: string; p_endpoint: string; p_p256dh: string; p_auth_secret: string; p_user_agent?: string | null }
+        Returns: string
+      }
+      delete_push_subscription: {
+        Args: { p_organization_id: string; p_endpoint: string }
+        Returns: boolean
       }
     }
     Enums: {
