@@ -44,6 +44,36 @@ export default async function AdminIndexPage() {
             messages
           </li>
         ) : null}
+        {access.canTasks ? (
+          <li>
+            <Link href="/app/admin/tasks">Tasks</Link>: every task at a location, with filters; give
+            tasks to people or cancel them
+          </li>
+        ) : null}
+        {access.canTasks ? (
+          <li>
+            <Link href="/app/admin/task-templates">Task templates</Link>: tasks that workflow rules
+            can make
+          </li>
+        ) : null}
+        {access.canTasks ? (
+          <li>
+            <Link href="/app/admin/workflow-rules">Workflow rules</Link>: make tasks by themselves
+            when something happens
+          </li>
+        ) : null}
+        {access.canNotices ? (
+          <li>
+            <Link href="/app/admin/notices">Notices</Link>: write notices, choose who gets them, see
+            who has confirmed
+          </li>
+        ) : null}
+        {access.canAudit ? (
+          <li>
+            <Link href="/app/admin/jobs">Failed jobs</Link>: notices, tasks and messages that did
+            not go out, and a way to retry
+          </li>
+        ) : null}
         {access.canAudit ? (
           <li>
             <Link href="/app/admin/audit">Audit log</Link>: who changed what, and when

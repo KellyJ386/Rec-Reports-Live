@@ -56,6 +56,38 @@ describe('mapDbError', () => {
     expect(mapDbError({ code: '42501', message: 'not signed in' })).toMatch(/Sign in again/);
   });
 
+  it('maps the task, notice, message and job refusals', () => {
+    expect(
+      mapDbError({ code: '42501', message: 'only a manager can assign tasks to others' }),
+    ).toMatch(/Only a manager can give a task/);
+    expect(mapDbError({ code: '22023', message: 'this task is already closed' })).toBe(
+      'This task is already closed.',
+    );
+    expect(mapDbError({ code: '22023', message: 'only an open task can be started' })).toMatch(
+      /can be started/,
+    );
+    expect(
+      mapDbError({ code: '22023', message: 'that person cannot be given tasks at this location' }),
+    ).toMatch(/cannot be given tasks/);
+    expect(mapDbError({ code: '22023', message: 'choose who the notice is for first' })).toBe(
+      'Choose who the notice is for first.',
+    );
+    expect(
+      mapDbError({ code: '22023', message: 'the notice would expire before it is shown' }),
+    ).toMatch(/later expiry/);
+    expect(
+      mapDbError({ code: '42501', message: 'you cannot message one or more of these people' }),
+    ).toMatch(/cannot message/);
+    expect(mapDbError({ code: '22023', message: 'only failed events can be retried' })).toMatch(
+      /failed job/,
+    );
+    expect(mapDbError({ code: '23514', message: 'that task template is archived' })).toMatch(
+      /archived/,
+    );
+    // A plain refusal still reads as "not allowed".
+    expect(mapDbError({ code: '42501', message: 'not allowed' })).toBe(DENIED_ERROR);
+  });
+
   it('never leaks raw SQL text', () => {
     const text = mapDbError({
       code: 'XX000',

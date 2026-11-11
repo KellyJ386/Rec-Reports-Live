@@ -7,6 +7,7 @@ import {
   listTimeZones,
   toTimeInput,
   weekdayLabel,
+  utcToZonedLocal,
   zonedLocalToUtc,
 } from './time';
 
@@ -66,5 +67,28 @@ describe('time zones', () => {
     expect(addDays('2026-02-28', 1)).toBe('2026-03-01');
     expect(addDays('2026-12-31', 1)).toBe('2027-01-01');
     expect(addDays('bad', 1)).toBeNull();
+  });
+});
+
+describe('utcToZonedLocal', () => {
+  it('gives the wall-clock text a datetime-local input takes', () => {
+    expect(utcToZonedLocal('2026-07-15T13:00:00.000Z', 'America/New_York')).toBe(
+      '2026-07-15T09:00',
+    );
+    expect(utcToZonedLocal('2026-11-01T17:00:00.000Z', 'America/New_York')).toBe(
+      '2026-11-01T12:00',
+    );
+    expect(utcToZonedLocal('2026-07-15T03:30:00.000Z', 'Asia/Kolkata')).toBe('2026-07-15T09:00');
+  });
+  it('is the inverse of zonedLocalToUtc', () => {
+    for (const local of ['2026-03-08T12:00', '2026-11-01T00:30', '2027-01-15T23:59']) {
+      const utc = zonedLocalToUtc(local, 'America/New_York');
+      expect(utcToZonedLocal(utc, 'America/New_York')).toBe(local);
+    }
+  });
+  it('is empty for nothing or bad input', () => {
+    expect(utcToZonedLocal(null, 'UTC')).toBe('');
+    expect(utcToZonedLocal('nope', 'UTC')).toBe('');
+    expect(utcToZonedLocal('2026-01-01T00:00:00Z', 'Not/AZone')).toBe('');
   });
 });

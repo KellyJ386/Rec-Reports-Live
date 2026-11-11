@@ -43,6 +43,31 @@ export default async function AdminLayout({ children }: { children: React.ReactN
                 <Link href="/app/admin/job-titles">Job titles</Link>
               </li>
             ) : null}
+            {access.canTasks ? (
+              <li>
+                <Link href="/app/admin/tasks">Tasks</Link>
+              </li>
+            ) : null}
+            {access.canTasks ? (
+              <li>
+                <Link href="/app/admin/task-templates">Task templates</Link>
+              </li>
+            ) : null}
+            {access.canTasks ? (
+              <li>
+                <Link href="/app/admin/workflow-rules">Workflow rules</Link>
+              </li>
+            ) : null}
+            {access.canNotices ? (
+              <li>
+                <Link href="/app/admin/notices">Notices</Link>
+              </li>
+            ) : null}
+            {access.canAudit ? (
+              <li>
+                <Link href="/app/admin/jobs">Failed jobs</Link>
+              </li>
+            ) : null}
             {access.canAudit ? (
               <li>
                 <Link href="/app/admin/audit">Audit log</Link>

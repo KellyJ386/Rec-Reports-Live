@@ -31,6 +31,10 @@ export type AdminAccess = {
   canPeopleAdmin: boolean;
   /** audit_log >= view somewhere. */
   canAudit: boolean;
+  /** tasks = admin somewhere (task board, templates, rules). */
+  canTasks: boolean;
+  /** communications = admin somewhere (write and manage notices). */
+  canNotices: boolean;
 };
 
 const hasRole = cache(async (orgId: string, locationId: string | null, role: string) => {
@@ -44,7 +48,7 @@ const hasRole = cache(async (orgId: string, locationId: string | null, role: str
   return data === true;
 });
 
-const hasPermission = cache(
+export const hasPermission = cache(
   async (orgId: string, locationId: string | null, moduleKey: string, level: PermissionLevel) => {
     const supabase = await createClient();
     const { data, error } = await supabase.rpc('has_permission', {
@@ -66,7 +70,7 @@ async function myLocationIds(orgId: string): Promise<string[]> {
   return [...new Set(ids)];
 }
 
-async function permissionAnywhere(
+export async function permissionAnywhere(
   orgId: string,
   moduleKey: string,
   level: PermissionLevel,
@@ -81,16 +85,27 @@ async function permissionAnywhere(
 
 export const getAdminAccess = cache(async (orgId: string): Promise<AdminAccess> => {
   const locations = await myLocationIds(orgId);
-  const [isOrgAdmin, locationAdmin, canSpaces, canSpaceKinds, canPeople, canPeopleAdmin, canAudit] =
-    await Promise.all([
-      hasRole(orgId, null, 'admin'),
-      Promise.all(locations.map((id) => hasRole(orgId, id, 'admin'))).then((r) => r.some(Boolean)),
-      permissionAnywhere(orgId, 'locations_spaces', 'edit'),
-      hasPermission(orgId, null, 'locations_spaces', 'edit'),
-      permissionAnywhere(orgId, 'people_roles', 'edit'),
-      permissionAnywhere(orgId, 'people_roles', 'admin'),
-      permissionAnywhere(orgId, 'audit_log', 'view'),
-    ]);
+  const [
+    isOrgAdmin,
+    locationAdmin,
+    canSpaces,
+    canSpaceKinds,
+    canPeople,
+    canPeopleAdmin,
+    canAudit,
+    canTasks,
+    canNotices,
+  ] = await Promise.all([
+    hasRole(orgId, null, 'admin'),
+    Promise.all(locations.map((id) => hasRole(orgId, id, 'admin'))).then((r) => r.some(Boolean)),
+    permissionAnywhere(orgId, 'locations_spaces', 'edit'),
+    hasPermission(orgId, null, 'locations_spaces', 'edit'),
+    permissionAnywhere(orgId, 'people_roles', 'edit'),
+    permissionAnywhere(orgId, 'people_roles', 'admin'),
+    permissionAnywhere(orgId, 'audit_log', 'view'),
+    permissionAnywhere(orgId, 'tasks', 'admin'),
+    permissionAnywhere(orgId, 'communications', 'admin'),
+  ]);
   return {
     isOrgAdmin,
     canLocations: isOrgAdmin || locationAdmin,
@@ -99,6 +114,8 @@ export const getAdminAccess = cache(async (orgId: string): Promise<AdminAccess> 
     canPeople,
     canPeopleAdmin,
     canAudit,
+    canTasks,
+    canNotices,
   };
 });
 
@@ -144,4 +161,25 @@ export async function getManageableSpaceLocations(
     candidates.map((l) => hasPermission(orgId, l.id, 'locations_spaces', 'edit')),
   );
   return { ok: true, data: candidates.filter((_, i) => checks[i]) };
+}
+
+/**
+ * Active locations where the caller holds `level` or more on a module: every location when they
+ * hold it at organization scope, else the locations they are assigned to. Each one is checked
+ * with the database, so an override that lowers the level is respected.
+ */
+export async function getLocationsWithPermission(
+  orgId: string,
+  moduleKey: string,
+  level: PermissionLevel,
+): Promise<{ ok: true; data: Location[]; orgWide: boolean } | { ok: false; message: string }> {
+  const all = await listAllLocations(orgId);
+  if (!all.ok) return all;
+  const orgWide = await hasPermission(orgId, null, moduleKey, level);
+  const mine = new Set(await myLocationIds(orgId));
+  const candidates = orgWide ? all.data : all.data.filter((l) => mine.has(l.id));
+  const checks = await Promise.all(
+    candidates.map((l) => hasPermission(orgId, l.id, moduleKey, level)),
+  );
+  return { ok: true, data: candidates.filter((_, i) => checks[i]), orgWide };
 }

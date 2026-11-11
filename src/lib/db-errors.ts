@@ -64,6 +64,51 @@ const TRIGGER_MESSAGES: ReadonlyArray<readonly [string, string]> = [
   ['not a member of this organization', 'That person is not in this organization.'],
   ['not signed in', 'Your session has expired. Sign in again.'],
   ['organization and role are required', 'Choose a role.'],
+  // Phase 2 (tasks, notices, messages, jobs): texts raised by the RPCs and triggers in
+  // migrations 20261112000200 to 000500. The two "only a manager" texts come first because
+  // they are 42501 errors that would otherwise read as a plain "not allowed".
+  [
+    'only a manager can assign tasks to others',
+    'Only a manager can give a task to someone else. You can keep it for yourself or leave it unassigned.',
+  ],
+  ['only a manager can reopen a cancelled task', 'Only a manager can reopen a cancelled task.'],
+  [
+    'that person cannot be given tasks at this location',
+    'That person cannot be given tasks at this location.',
+  ],
+  ['unknown job title', 'That job title is not available.'],
+  ['unknown space at this location', 'That space is not at this location.'],
+  ['invalid priority', 'Pick a priority from the list.'],
+  ['only an open task can be started', 'Only a task that has not been started can be started.'],
+  ['this task is already closed', 'This task is already closed.'],
+  ['only a closed task can be reopened', 'Only a finished or cancelled task can be reopened.'],
+  [
+    'a closed task cannot be reassigned',
+    'A finished or cancelled task cannot be given to someone else.',
+  ],
+  ['note is too long', 'That note is too long. Keep it under 2000 characters.'],
+  ['reason is too long', 'That reason is too long. Keep it under 2000 characters.'],
+  ['a comment needs 1 to 2000 characters', 'A comment needs 1 to 2000 characters.'],
+  [
+    'that task template belongs to a different location',
+    'That task template belongs to a different location.',
+  ],
+  ['that task template is archived', 'That task template is archived, so a rule cannot use it.'],
+  ['choose who the notice is for first', 'Choose who the notice is for first.'],
+  ['only a draft can be published', 'Only a draft notice can be published.'],
+  [
+    'the notice would expire before it is shown',
+    'The notice would expire before it is shown. Pick a later expiry.',
+  ],
+  ['this notice is already archived', 'This notice is already archived.'],
+  ['choose 1 to 50 people', 'Choose 1 to 50 people.'],
+  ['a message needs 1 to 4000 characters', 'A message needs 1 to 4000 characters.'],
+  [
+    'you cannot message one or more of these people',
+    'You cannot message one or more of those people.',
+  ],
+  ['only failed events can be retried', 'Only a failed job can be retried.'],
+  ['too many at once', 'Too many at once. Try fewer.'],
 ];
 
 export function mapDbError(

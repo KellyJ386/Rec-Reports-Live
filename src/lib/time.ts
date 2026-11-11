@@ -139,3 +139,28 @@ export function addDays(date: string, days: number): string | null {
   const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) + days * 86400000;
   return new Date(ms).toISOString().slice(0, 10);
 }
+
+/**
+ * An instant as the wall-clock text an <input type="datetime-local"> takes in a time zone
+ * ("2026-11-10T15:30"). The inverse of zonedLocalToUtc. Empty when the instant or zone is bad.
+ */
+export function utcToZonedLocal(iso: string | null | undefined, timeZone: string): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).formatToParts(date);
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+    return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
+  } catch {
+    return '';
+  }
+}
