@@ -23,6 +23,7 @@ import {
   createWebPushSender,
   deliverNotifications,
 } from '@/domains/communications';
+import { createStaffingHandlers, createStaffingPort } from '@/domains/staffing';
 import {
   DELIVERY_BATCH_SIZE,
   HARD_BUDGET_MS,
@@ -30,6 +31,7 @@ import {
   OUTBOX_BATCH_SIZE,
   OVERDUE_SWEEP_LIMIT,
   SOFT_BUDGET_MS,
+  UNCOVERED_WITHIN_HOURS,
 } from './budget';
 import { resolveDeliveryConfig } from './delivery-config';
 import type { CronSummary } from './with-cron-route';
@@ -51,6 +53,7 @@ export async function runDrainOutbox(): Promise<CronSummary> {
     external: [
       { type: 'notice.published', handler: createNoticeNotifyHandler({ notices, notifier }) },
       { type: 'message.sent', handler: createMessageNotifyHandler({ notifier }) },
+      ...createStaffingHandlers({ staffing: createStaffingPort(client), notifier }),
     ],
   });
   const summary = await drainOutbox(createOutboxPort(client), registry, {
@@ -97,5 +100,12 @@ export async function runDeliverNotifications(): Promise<CronSummary> {
 export async function runTaskOverdue(): Promise<CronSummary> {
   const emitted =
     await createWorkflowPort(createAdminClient()).emitOverdueEvents(OVERDUE_SWEEP_LIMIT);
+  return { emitted };
+}
+
+/** Emits shift.uncovered for open shifts that start within 48 hours (the drain turns those into notifications). */
+export async function runUncoveredShifts(): Promise<CronSummary> {
+  const emitted =
+    await createStaffingPort(createAdminClient()).emitUncovered(UNCOVERED_WITHIN_HOURS);
   return { emitted };
 }

@@ -68,6 +68,35 @@ export default async function AdminIndexPage() {
             who has confirmed
           </li>
         ) : null}
+        {access.canSchedule ? (
+          <li>
+            <Link href="/app/admin/schedule">Schedule</Link>: build a week, assign shifts and
+            publish
+          </li>
+        ) : null}
+        {access.canScheduleRequests ? (
+          <li>
+            <Link href="/app/admin/schedule/requests">Schedule requests</Link>: swaps, drops, open
+            shift claims and time off waiting for you
+          </li>
+        ) : null}
+        {access.canScheduleAdmin ? (
+          <li>
+            <Link href="/app/admin/positions">Positions</Link>: the jobs people are scheduled for
+          </li>
+        ) : null}
+        {access.canScheduleAdmin ? (
+          <li>
+            <Link href="/app/admin/qualifications">Qualifications</Link>: certificates and who holds
+            them
+          </li>
+        ) : null}
+        {access.canSchedule ? (
+          <li>
+            <Link href="/app/admin/shift-templates">Shift templates</Link>: a week or a day you can
+            copy onto a schedule
+          </li>
+        ) : null}
         {access.canAudit ? (
           <li>
             <Link href="/app/admin/jobs">Failed jobs</Link>: notices, tasks and messages that did

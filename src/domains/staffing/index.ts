@@ -1,0 +1,97 @@
+// Public interface of the staffing domain (positions, qualifications, schedules, shifts,
+// templates, availability, time off, swaps, drops and open-shift claims).
+//
+// Boundary rule (docs/ARCHITECTURE.md): this file is the only way code outside
+// src/domains/staffing may reach this domain. Never import another domain's internal
+// files, only its index. ESLint enforces this (see eslint.config.mjs).
+export * from './schemas';
+export * from './logic';
+export {
+  addAvailability,
+  addTemplateItem,
+  applyTemplate,
+  archivePosition,
+  archiveQualification,
+  archiveTemplate,
+  assignShift,
+  cancelClaim,
+  cancelShift,
+  cancelSwap,
+  cancelTimeOff,
+  createSchedule,
+  createShift,
+  decideClaim,
+  decideSwap,
+  decideTimeOff,
+  getMyNextShift,
+  getSchedule,
+  getShift,
+  getShiftsByIds,
+  getTemplate,
+  listClaimableShifts,
+  listShiftOverrides,
+  listSwapCandidates,
+  positionShiftsMissingQualification,
+  listClaimsAwaitingDecision,
+  listMyAvailability,
+  listMyClaims,
+  listMySwaps,
+  listMyTimeOff,
+  listMyUpcomingShifts,
+  listPendingTimeOff,
+  listPositions,
+  listQualificationHolders,
+  listQualifications,
+  listScheduleShifts,
+  listSchedules,
+  listSwapsAwaitingDecision,
+  listTemplateItems,
+  listTemplates,
+  publishSchedule,
+  removeAvailability,
+  removePersonQualification,
+  removeTemplateItem,
+  requestClaim,
+  requestDrop,
+  requestSwap,
+  requestTimeOff,
+  respondToSwap,
+  saveQualification,
+  savePosition,
+  saveTemplate,
+  setPersonQualification,
+  updateShift,
+} from './service';
+export type {
+  AssignResult,
+  AvailabilityRow,
+  ClaimRow,
+  ClaimableShift,
+  PersonQualificationRow,
+  PositionRow,
+  QualificationRow,
+  ScheduleRow,
+  ShiftOverride,
+  ShiftRow,
+  SwapCandidate,
+  SwapRow,
+  TemplateApplyRow,
+  TemplateItemRow,
+  TemplateRow,
+  TimeOffRow,
+} from './service';
+
+// Background worker (notifications for staffing events). Composed in src/lib/cron.
+export {
+  STAFFING_EVENT_TYPES,
+  STAFFING_HANDLER_NAME,
+  createStaffingHandlers,
+  createStaffingNotifyHandler,
+} from './worker/handlers';
+export { createStaffingPort } from './worker/supabase-ports';
+export type {
+  ShiftSnapshot,
+  StaffingNotifier,
+  StaffingPort,
+  StaffingRecipient,
+} from './worker/types';

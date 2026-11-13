@@ -57,7 +57,9 @@ After every migration: regenerate `src/lib/supabase/database.types.ts`, add pgTA
 
 Built (Phases 1 and 2): scaffold and CI, tenancy and access schema with RLS, audit log, sign-in and password reset, two-step sign-in (TOTP) for the admin tier, 30-minute admin idle sign-out, rate limits on sign-in and password reset, invites, plain admin screens, mock seed, the outbox and job runner, tasks and workflow rules, notices, messages, and notifications by email and web push. See `docs/SECURITY.md` for the access model and the Phase 2 review fixes.
 
-Nothing has run on hosted Supabase, GitHub CI or Vercel yet. Everything was tested on a local Postgres 16 stand-in (`scripts/db/test-local.sh`) and with unit tests against in-memory ports. Treat the first run on real Supabase as untested ground.
+Built (Phase 3): staff scheduling. Positions, qualifications, weekly schedules with draft and publish, shifts, shift templates, availability, time off, swaps, drops and open shift claims, with staff and admin screens and an uncovered-shift sweep. See `docs/SECURITY.md` ("Staff scheduling" and "Review fixes (20261113000200)").
+
+GitHub CI runs the app checks and the pgTAP suite on a Supabase stack. Nothing has run on the hosted Supabase project yet, and the Vercel project is not configured, so real sign-in, MFA, invites, email, push and cron are untested ground.
 
 Open items:
 
@@ -66,3 +68,7 @@ Open items:
 - Hosted Supabase Auth settings must be set by hand to match `supabase/config.toml`: sign-ups off, 12-character passwords, the exact redirect URL, Auth rate limits, 15-minute JWT, email templates.
 - Writes can be refused with SQLSTATE `PT429` (per-person write limits). Map it through `src/lib/db-errors.ts`.
 - Private messages and their metadata are hidden from every admin, platform admins included. Keep message content out of the outbox, notifications and the audit log.
+- Never create a custom range type: hosted Supabase leaves its constructor functions callable by `anon`. Use `tsrange`, `tstzrange` or `daterange`.
+- `authenticated` cannot select the override columns on `shifts`, so never `select *` there. Read overrides through `shift_overrides()`.
+- A schedule admin cannot override assignment rules for themself. A schedule holds at most 2,000 shifts. Publishing emits one `schedule.published` event; `shift.opened` is capped at 20 per location per hour.
+- Staff scheduling known gaps: losing a qualification or membership does not unassign future shifts; availability is informational only; pick lists cap at 200 people.

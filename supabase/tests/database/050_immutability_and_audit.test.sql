@@ -220,6 +220,53 @@ select pg_temp.id(v.org), pg_temp.id(v.person), 'email', false from (values ('or
 
 -- END PHASE 2 ROWS
 
+-- BEGIN PHASE 3 ROWS: byte-identical in every file that uses it (020, 050, 090, 100).
+-- Phase 3 rows: one row in each of the 12 staffing tables, in both organizations, written with the
+-- owner's rights (the API roles cannot write these tables; every write is an RPC). Far-future fixed week
+-- (Monday 2030-01-07). Org A at A1: staff A1 holds a published shift and asked to drop it, and asked for the
+-- open shift; org B at B1: the same for staff B1.
+insert into public.qualifications (id, organization_id, name)
+select pg_temp.id('q_' || v.k), pg_temp.id(v.org), 'Qualification ' || v.k from (values ('a', 'org_a'), ('b', 'org_b')) v (k, org);
+insert into public.positions (id, organization_id, location_id, name)
+select pg_temp.id('pos_' || v.k), pg_temp.id(v.org), pg_temp.id(v.loc), 'Position ' || v.k
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.position_qualifications (organization_id, position_id, qualification_id)
+select pg_temp.id(v.org), pg_temp.id('pos_' || v.k), pg_temp.id('q_' || v.k) from (values ('a', 'org_a'), ('b', 'org_b')) v (k, org);
+insert into public.person_qualifications (organization_id, person_id, qualification_id, valid_from, expires_on)
+select pg_temp.id(v.org), pg_temp.id(v.person), pg_temp.id('q_' || v.k), date '2029-01-01', date '2031-01-01'
+from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
+insert into public.schedules (id, organization_id, location_id, week_start, status, published_at)
+select pg_temp.id('sched_' || v.k), pg_temp.id(v.org), pg_temp.id(v.loc), date '2030-01-07', 'published', now()
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.shifts (id, organization_id, location_id, schedule_id, position_id, starts_at, ends_at, assigned_person_id)
+select pg_temp.id('shift_' || v.k || v.n), pg_temp.id(v.org), pg_temp.id(v.loc), pg_temp.id('sched_' || v.k), pg_temp.id('pos_' || v.k),
+       v.s::timestamptz, v.e::timestamptz, case when v.n = '1' then pg_temp.id(v.person) end
+from (values ('a', '1', 'org_a', 'loc_a1', 'p_staff_a1', '2030-01-08 09:00-05', '2030-01-08 17:00-05'),
+             ('a', '2', 'org_a', 'loc_a1', 'p_staff_a1', '2030-01-09 09:00-05', '2030-01-09 17:00-05'),
+             ('b', '1', 'org_b', 'loc_b1', 'p_staff_b1', '2030-01-08 09:00-07', '2030-01-08 17:00-07'),
+             ('b', '2', 'org_b', 'loc_b1', 'p_staff_b1', '2030-01-09 09:00-07', '2030-01-09 17:00-07')) v (k, n, org, loc, person, s, e);
+insert into public.shift_templates (id, organization_id, location_id, name)
+select pg_temp.id('stpl_' || v.k), pg_temp.id(v.org), pg_temp.id(v.loc), 'Week ' || v.k
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.shift_template_items (organization_id, location_id, template_id, position_id, day_offset, start_time, duration_minutes)
+select pg_temp.id(v.org), pg_temp.id(v.loc), pg_temp.id('stpl_' || v.k), pg_temp.id('pos_' || v.k), 0, time '09:00', 480
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.availability (organization_id, person_id, day_of_week, start_time, end_time, kind)
+select pg_temp.id(v.org), pg_temp.id(v.person), 1, time '09:00', time '17:00', 'available'
+from (values ('org_a', 'p_staff_a1'), ('org_b', 'p_staff_b1')) v (org, person);
+insert into public.time_off_requests (organization_id, person_id, starts_on, ends_on, reason)
+select pg_temp.id(v.org), pg_temp.id(v.person), date '2030-02-01', date '2030-02-02', 'Reason ' || v.person
+from (values ('org_a', 'p_staff_a1'), ('org_b', 'p_staff_b1')) v (org, person);
+insert into public.shift_swaps (organization_id, location_id, kind, shift_id, from_person_id)
+select pg_temp.id(v.org), pg_temp.id(v.loc), 'drop', pg_temp.id('shift_' || v.k || '1'), pg_temp.id(v.person)
+from (values ('a', 'org_a', 'loc_a1', 'p_staff_a1'), ('b', 'org_b', 'loc_b1', 'p_staff_b1')) v (k, org, loc, person);
+insert into public.shift_claims (organization_id, location_id, shift_id, person_id)
+select pg_temp.id(v.org), pg_temp.id(v.loc), pg_temp.id('shift_' || v.k || '2'), pg_temp.id(v.person)
+from (values ('a', 'org_a', 'loc_a1', 'p_staff_a1'), ('b', 'org_b', 'loc_b1', 'p_staff_b1')) v (k, org, loc, person);
+
+-- END PHASE 3 ROWS
+
+
 -- ===========================================================================
 -- Immutability
 -- ===========================================================================

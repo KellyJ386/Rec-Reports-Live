@@ -178,6 +178,9 @@ select is((select coalesce(string_agg(x.c || '(' || x.k || ')', ', '), '') from 
 --   notice_audiences.notice_id -> notices: a notice with location_id null is organization-wide and its audience
 --     rows may name any location; a location notice can only target its own location
 --     (private.can_edit_notice_audience, the audience insert policy).
+--   shifts.position_id -> positions, shift_template_items.position_id -> positions: a position with location_id
+--     null serves every location of the organization; the rule "org-wide or at the shift's location" is enforced
+--     by the staffing RPCs and the shifts_validate trigger (tested in the Phase 3 files).
 select is((select coalesce(string_agg(f.child || '(' || f.child_cols || ') -> ' || f.parent, ', ' order by f.child, f.child_cols), '')
            from gfk f
            where pg_temp.has_col(f.conrelid, 'location_id') and pg_temp.has_col(f.confrelid, 'location_id')
@@ -186,14 +189,18 @@ select is((select coalesce(string_agg(f.child || '(' || f.child_cols || ') -> ' 
                ('tasks', 'task_template_id,organization_id', 'task_templates'),
                ('tasks', 'source_rule_id,organization_id', 'workflow_rules'),
                ('workflow_rules', 'task_template_id,organization_id', 'task_templates'),
-               ('notice_audiences', 'notice_id,organization_id', 'notices'))),
+               ('notice_audiences', 'notice_id,organization_id', 'notices'),
+               ('shifts', 'position_id,organization_id', 'positions'),
+               ('shift_template_items', 'position_id,organization_id', 'positions'))),
   '', 'a foreign key from a location-scoped table to a location-scoped parent also pairs location_id (a child stays in its parent''s location), except the reviewed "organization or location" parents');
 
 select is((select coalesce(string_agg(x.c || '(' || x.k || ') -> ' || x.p, ', '), '') from (values
              ('tasks', 'task_template_id,organization_id', 'task_templates'),
              ('tasks', 'source_rule_id,organization_id', 'workflow_rules'),
              ('workflow_rules', 'task_template_id,organization_id', 'task_templates'),
-             ('notice_audiences', 'notice_id,organization_id', 'notices')) x (c, k, p)
+             ('notice_audiences', 'notice_id,organization_id', 'notices'),
+             ('shifts', 'position_id,organization_id', 'positions'),
+             ('shift_template_items', 'position_id,organization_id', 'positions')) x (c, k, p)
            where not exists (select 1 from gfk f where f.child = x.c and f.child_cols = x.k and f.parent = x.p
                              and pg_temp.has_col(f.conrelid, 'location_id') and pg_temp.has_col(f.confrelid, 'location_id')
                              and not pg_temp.fk_pairs(f.conkey, f.confkey, f.conrelid, f.confrelid, 'location_id'))),
@@ -291,7 +298,15 @@ select is((select coalesce(string_agg(sig, ', ' order by sig), '') from gf
                                  'mark_notifications_read', 'mark_all_notifications_read',
                                  'save_push_subscription', 'delete_push_subscription',
                                  -- Phase 2 review fixes (000600)
-                                 'notice_acknowledgment_status', 'my_notices', 'can_resend_person_invite')),
+                                 'notice_acknowledgment_status', 'my_notices', 'can_resend_person_invite',
+                                 -- Phase 3 (staff scheduling, 20261113000100)
+                                 'add_availability', 'add_shift_template_item', 'apply_shift_template', 'archive_position', 'archive_qualification', 'archive_shift_template',
+                                 'assign_shift', 'cancel_shift', 'cancel_shift_claim', 'cancel_shift_swap', 'cancel_time_off', 'create_schedule',
+                                 'create_shift', 'decide_shift_claim', 'decide_shift_swap', 'decide_time_off', 'my_claimable_shifts', 'publish_schedule',
+                                 'remove_availability', 'remove_person_qualification', 'remove_shift_template_item', 'request_shift_claim', 'request_shift_drop', 'request_shift_swap',
+                                 'request_time_off', 'respond_shift_swap', 'save_position', 'save_qualification', 'save_shift_template', 'set_person_qualification', 'update_shift',
+                                 -- review fixes (20261113000200)
+                                 'shift_overrides', 'swap_candidates', 'position_shifts_missing_qualification', 'set_staffing_switches')),
   '', 'only the reviewed SECURITY DEFINER functions in public are callable by authenticated through /rpc (add new ones here on purpose)');
 
 select is((select coalesce(string_agg(x, ', '), '') from unnest(array[
@@ -305,7 +320,14 @@ select is((select coalesce(string_agg(x, ', '), '') from unnest(array[
              'acknowledge_notice', 'send_message', 'mark_message_read',
              'mark_notifications_read', 'mark_all_notifications_read',
              'save_push_subscription', 'delete_push_subscription',
-             'notice_acknowledgment_status', 'my_notices', 'can_resend_person_invite']) x
+             'notice_acknowledgment_status', 'my_notices', 'can_resend_person_invite',
+             'add_availability', 'add_shift_template_item', 'apply_shift_template', 'archive_position', 'archive_qualification', 'archive_shift_template',
+             'assign_shift', 'cancel_shift', 'cancel_shift_claim', 'cancel_shift_swap', 'cancel_time_off', 'create_schedule',
+             'create_shift', 'decide_shift_claim', 'decide_shift_swap', 'decide_time_off', 'my_claimable_shifts', 'publish_schedule',
+             'remove_availability', 'remove_person_qualification', 'remove_shift_template_item', 'request_shift_claim', 'request_shift_drop', 'request_shift_swap',
+             'request_time_off', 'respond_shift_swap', 'save_position', 'save_qualification', 'save_shift_template', 'set_person_qualification', 'update_shift',
+                                 -- review fixes (20261113000200)
+                                 'shift_overrides', 'swap_candidates', 'position_shifts_missing_qualification', 'set_staffing_switches']) x
            where not exists (select 1 from gf where gf.nspname = 'public' and gf.proname = x and gf.prosecdef)),
   '', 'the /rpc allowlist has no stale entries');
 
@@ -342,7 +364,9 @@ insert into svc_only values
   ('public', 'worker_push_subscriptions_for_delivery'), ('public', 'release_outbox_event'),
   ('public', 'release_notification_delivery'), ('public', 'extend_outbox_lock'), ('public', 'escalate_overdue_task'),
   -- 000700: message recipients for the notify handler
-  ('public', 'worker_message_recipients_for_event');
+  ('public', 'worker_message_recipients_for_event'),
+  -- Phase 3 (20261113000100): the uncovered-shift sweep and the shift worker reads
+  ('public', 'emit_uncovered_shift_events'), ('public', 'worker_shift_for_event'), ('public', 'worker_shift_event_recipients');
 
 select is((select coalesce(string_agg(g.sig, ', ' order by g.sig), '') from gf g
            join svc_only s on s.schema_name = g.nspname and s.proname = g.proname

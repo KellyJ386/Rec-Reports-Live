@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { getActiveOrganization, getSessionContext } from '@/lib/auth/session';
 import { redirectIfMfaPending } from '@/lib/auth/mfa-server';
 import { getAdminAccess } from '@/experiences/admin/access';
-import { getMyTitleScopes, getStaffAccess } from '@/experiences/employee/access';
+import { getLocationMap, getMyTitleScopes, getStaffAccess } from '@/experiences/employee/access';
 import {
   countUnreadMessages,
   countUnreadNotifications,
@@ -11,6 +11,7 @@ import {
   needsAcknowledgment,
 } from '@/domains/communications';
 import { countMyOpenTasks } from '@/domains/workflows';
+import { formatShiftRange, getMyNextShift } from '@/domains/staffing';
 import { switchOrganization } from './actions';
 import { SignOutForm } from './sign-out-form';
 
@@ -45,6 +46,12 @@ export default async function AppHomePage() {
             : null,
         ])
       : [null, null, null, null];
+  const nextShift =
+    orgId && personId && staff?.schedule ? await getMyNextShift(orgId, personId) : null;
+  const nextShiftZone =
+    nextShift && nextShift.ok && nextShift.data
+      ? (await getLocationMap(orgId as string)).get(nextShift.data.location_id)
+      : null;
   const hasAdmin = admin !== null && Object.values(admin).some(Boolean);
 
   return (
@@ -119,6 +126,16 @@ export default async function AppHomePage() {
               <li>
                 <Link href="/app/messages">Messages</Link>
                 {unreadMessages && unreadMessages.ok ? `: ${unreadMessages.data} unread` : ''}
+              </li>
+            ) : null}
+            {staff.schedule ? (
+              <li>
+                <Link href="/app/schedule">Schedule</Link>
+                {nextShift && nextShift.ok
+                  ? nextShift.data && nextShiftZone
+                    ? `: my next shift is ${formatShiftRange(nextShift.data.starts_at, nextShift.data.ends_at, nextShiftZone.timezone)}`
+                    : ': no upcoming shift'
+                  : ''}
               </li>
             ) : null}
             <li>

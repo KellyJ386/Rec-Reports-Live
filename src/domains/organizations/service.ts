@@ -155,3 +155,36 @@ export async function updateOrganizationSettings(
   if (error) return failure(error);
   return requireChanged(data);
 }
+
+/** The two staffing switches kept in organization_settings.settings.staffing (both default to off). */
+export type StaffingSwitches = { auto_approve_swaps: boolean; first_come_open_shifts: boolean };
+
+export async function getStaffingSwitches(orgId: string): Promise<Result<StaffingSwitches>> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('organization_settings')
+    .select('settings')
+    .eq('organization_id', orgId)
+    .maybeSingle();
+  if (error) return failure(error);
+  const raw = (data?.settings ?? {}) as Record<string, unknown>;
+  const staffing = (raw.staffing ?? {}) as Record<string, unknown>;
+  return ok({
+    auto_approve_swaps: staffing.auto_approve_swaps === true,
+    first_come_open_shifts: staffing.first_come_open_shifts === true,
+  });
+}
+
+/** Changes only the two staffing switches, in one database call (other settings are untouched). */
+export async function updateStaffingSwitches(
+  orgId: string,
+  switches: StaffingSwitches,
+): Promise<Result<null>> {
+  const supabase = await createClient();
+  const { error } = await supabase.rpc('set_staffing_switches', {
+    p_organization_id: orgId,
+    p_auto_approve_swaps: switches.auto_approve_swaps,
+    p_first_come_open_shifts: switches.first_come_open_shifts,
+  });
+  return error ? failure(error) : ok(null);
+}

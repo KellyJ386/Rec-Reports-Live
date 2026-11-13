@@ -66,6 +66,14 @@ Consequences: an org admin (90) can create and remove location admins (80) but n
 | `acknowledgments` | Own rows, plus `communications` = `admin` in the notice's home scope |
 | `messages`, `message_recipients` | Sender and recipients only. **No admin or platform-admin exception.** A sender sees the recipient rows (and `read_at`) of their own messages. |
 | `notifications`, `notification_deliveries`, `push_subscriptions`, `notification_preferences` | The person themselves only, no platform-admin exception. Deliveries: status columns only (no provider id, no error). Push subscriptions: never `endpoint`, `p256dh` or `auth_secret` (not even the owner; only service_role). |
+| `positions`, `qualifications`, `position_qualifications` | Members with `staff_schedule` >= `view` at org scope or at any location of the org (Phase 3) |
+| `person_qualifications` | The person, plus `staff_schedule` >= `edit` over that person (org scope, or a location where they hold an assignment) |
+| `schedules` | `staff_schedule` >= `edit` at the location: drafts too. `staff_schedule` >= `view`: published only |
+| `shifts` | `staff_schedule` >= `edit` at the location: all. Otherwise only shifts of a **published** schedule: every non-cancelled one at a location where the caller has `staff_schedule` >= `view`, plus the caller's own in any status (own = a person id of `private.my_person_ids()`, so the MFA rules and membership apply; 20261113000200). **Columns** (20261113000200): `authenticated` may read every column except `override_kinds`, `override_by_person_id`, `override_at` and `uncovered_emitted_for`; `select *` is refused. Schedulers read overrides with `shift_overrides(schedule_id)` |
+| `shift_templates`, `shift_template_items` | `staff_schedule` >= `edit` at the location |
+| `availability`, `time_off_requests` (reason included) | The person, plus `availability_time_off` = `admin` over that person. Nobody else |
+| `shift_swaps` | The two parties, plus `shift_swaps` = `admin` at the location |
+| `shift_claims` | The claimant, plus `shift_swaps` = `admin` at the location |
 
 **Writes.**
 
@@ -97,12 +105,13 @@ Consequences: an org admin (90) can create and remove location admins (80) but n
 | `notifications`, `notification_deliveries` | worker functions only | `mark_notifications_read` / `mark_all_notifications_read`; worker functions | no |
 | `push_subscriptions` | `save_push_subscription` (own) | same; `disable_push_subscription` (service_role) | own rows (`delete_push_subscription` or by id) |
 | `notification_preferences` | own rows | own rows, `enabled` only | own rows |
+| All Phase 3 (`staffing`) tables | RPCs only (see "Staff scheduling") | RPCs only | RPCs only (a draft shift, a template item, an availability window, a person qualification) |
 
 Platform admins pass every policy through the helpers (support needs no service-role key). A location-scoped admin can't insert into `people` directly. Onboarding goes through `create_person_with_assignment`, which is the only way to attach a first assignment to a person the caller can't already see, and only to the person that same call creates.
 
 **Error messages.** BEFORE triggers run before RLS, so they must not describe rows the caller can't see. The role-assignment and space-hierarchy triggers first refuse a signed-in caller who is not a member of the row's organization with `42501 not allowed`. A role that doesn't exist and a role from another organization both give `42501 not allowed`. Own-org messages name no keys. The `space_hours` exclusion constraint includes `organization_id` and `location_id`, so its DETAIL (which prints the conflicting row) can only show a row of the caller's own tenant. Any new BEFORE trigger, or any constraint whose error echoes another row, must follow the same rule.
 
-**Grants.** `anon` and `PUBLIC` have no privileges on any table or function. `authenticated` has only the table operations listed above, with column-level UPDATE grants (never `id`, `organization_id`, `location_id`, `slug`, `key`). `service_role` has select/insert/update/delete on Phase 1 tables but **no TRUNCATE, TRIGGER or REFERENCES** (also revoked in default privileges), and only SELECT on `audit_log`. Every audited table also has a `zz_audit_no_truncate` statement trigger that blocks TRUNCATE for every role, the owner included. Phase 2 tables are stricter for service_role: it has SELECT only on `outbox_events`, `outbox_event_handlers`, `tasks`, `task_events`, the communications tables and the notification tables, and writes them only through the worker functions, so no API key can skip a history row or an event, or forge an outbox row; it has select/insert/update/delete on `task_templates` and `workflow_rules` (configuration). Default privileges are revoked, so a new table or function is granted to nobody until a migration says so. Every new migration must: create the table, `enable row level security`, `revoke all ... from public, anon, authenticated`, grant exactly what its policies need, and attach the audit trigger.
+**Grants.** `anon` and `PUBLIC` have no privileges on any table or function. `authenticated` has only the table operations listed above, with column-level UPDATE grants (never `id`, `organization_id`, `location_id`, `slug`, `key`). `service_role` has select/insert/update/delete on Phase 1 tables but **no TRUNCATE, TRIGGER or REFERENCES** (also revoked in default privileges), and only SELECT on `audit_log`. Every audited table also has a `zz_audit_no_truncate` statement trigger that blocks TRUNCATE for every role, the owner included. Phase 2 tables are stricter for service_role: it has SELECT only on `outbox_events`, `outbox_event_handlers`, `tasks`, `task_events`, the communications tables and the notification tables, and writes them only through the worker functions, so no API key can skip a history row or an event, or forge an outbox row; it has select/insert/update/delete on `task_templates` and `workflow_rules` (configuration). Default privileges are revoked, so a new table or function is granted to nobody until a migration says so. Every new migration must: create the table, `enable row level security`, `revoke all ... from public, anon, authenticated`, grant exactly what its policies need, and attach the audit trigger. Phase 3 tables: `authenticated` and `service_role` have SELECT only; nobody has INSERT, UPDATE or DELETE. On `shifts`, `authenticated` has a column-level SELECT grant without the override and sweep columns (20261113000200); `service_role` keeps table-level SELECT.
 
 ### Helper functions
 
@@ -246,6 +255,14 @@ Policy style: wrap argument-free helpers in a subselect (`organization_id in (se
 | `notice_publish` | 20 / hour | `publish_notice` |
 | `notice_critical` | 5 / day | `publish_notice` of a `critical` notice (on top of the above) |
 | `push_save` | 10 / hour | `save_push_subscription` |
+| `staffing_config` | 120 / 10 min | `save_position`, `archive_position`, `save_qualification`, `archive_qualification`, `set_person_qualification`, `remove_person_qualification`, `save_shift_template`, `archive_shift_template`, `add_shift_template_item`, `remove_shift_template_item` (Phase 3), `set_staffing_switches` (20261113000200) |
+| `shift_edit` | 300 / 10 min | `create_schedule`, `create_shift`, `update_shift`, `assign_shift`, `cancel_shift`; `apply_shift_template` is charged **once per shift it makes** (at least once per call; 20261113000200), so one call can make at most what is left of the 300 |
+| `schedule_publish` | 20 / hour | `publish_schedule` |
+| `shift_exchange` | 30 / 10 min | `request_shift_swap`, `respond_shift_swap`, `cancel_shift_swap`, `request_shift_drop`, `request_shift_claim`, `cancel_shift_claim` |
+| `shift_decide` | 120 / 10 min | `decide_shift_swap`, `decide_shift_claim` |
+| `availability_edit` | 60 / 10 min | `add_availability`, `remove_availability` |
+| `time_off_request` | 20 / hour | `request_time_off`, `cancel_time_off` |
+| `time_off_decide` | 120 / 10 min | `decide_time_off` |
 
 Other limits: event causation depth 3 (`private.outbox_max_causation_depth()`); 20 enabled workflow rules per organization per event type (`private.max_enabled_rules_per_event_type()`); 10 push subscriptions per person, oldest replaced (`private.max_push_subscriptions_per_person()`); 3 manual retries per dead event (`private.outbox_max_manual_retries()`); unchanged: outbox 8 attempts, deliveries 5, batches 1-500, overdue sweep 1-5000, `create_notifications` 1-10000 people.
 
@@ -294,6 +311,147 @@ Changed behaviour of existing functions: `retry_dead_outbox_event` refuses `mess
 ### Message notifications (migration `20261112000700_worker_message_recipients`)
 
 The worker learns who to tell about a message only through `public.worker_message_recipients_for_event` (service_role only; refuses any JWT with a `sub`). It returns ids and an app link (`/app/messages/<id>`), never content, so message text never reaches `notifications`, the outbox or the audit log: the notification title is generic ("You have a new message") and its body is empty. `escalate_overdue_task` does not exclude the assignee (it returns everyone with `tasks` = `admin` at the location, which can include an assignee who is a manager); notifying the assignee separately with the same `kind` and event is safe because `create_notification` is idempotent on (event, person, kind).
+
+### Staff scheduling (migration `20261113000100_staff_scheduling`)
+
+**Modules** (existing keys; seeded defaults staff / manager / admin):
+
+| Module | `view` | `edit` | `admin` |
+| --- | --- | --- | --- |
+| `staff_schedule` (view / admin / admin) | Published schedules and shifts at the location; your own shifts | Also drafts; create schedules, add / change / assign / cancel shifts, stamp templates, publish; templates at the location | Also override the time off and qualification rules when assigning (any path); positions (org-wide ones need org scope), qualifications (admin anywhere in the org), and who holds them (admin over the person) |
+| `shift_swaps` (edit / admin / admin) | nothing extra | Offer, accept, cancel swaps; request drops; claim open shifts (own only) | See every swap, drop and claim at the location; approve or deny them (not your own) |
+| `availability_time_off` (edit / admin / admin) | Your own availability and time off | Also change your availability; request and cancel your own time off | Read and decide availability and time off of people in scope (org scope: all; a location: people assigned there); not your own |
+
+**Assignment rules** (`private.shift_assignment_problems`, the one implementation, used by every path that puts a person on a shift: `create_shift`, `assign_shift`, `update_shift` (new time or position), `apply_shift_template`, `respond_shift_swap`, `decide_shift_swap`, the auto-approval, `request_shift_claim`, `decide_shift_claim`, plus `my_claimable_shifts` and the `shift.opened` fan-out):
+1. `not_member`: the person is not archived, an active member (`person_is_active_member`), has `staff_schedule` >= `view` at the shift's location (`person_effective_level`: active account, covering assignment, MFA rule when it is the caller), and, on manager paths, is visible to the caller (`visible_person_ids`; platform admins skip this).
+2. `overlap`: no other scheduled shift of that person anywhere in the organization overlaps (`[starts_at, ends_at)`). Also the `shifts_no_overlap` exclusion constraint; a race-time violation is turned into the same 23514.
+3. `time_off`: no approved time off whose local days (in the shift location's time zone) overlap the shift.
+4. `qualification`: every qualification the position requires is held with `valid_from <= d <= expires_on` (nulls open), `d` = the local date of the shift start.
+
+`p_override` (on `create_shift`, `update_shift`, `assign_shift`, `decide_shift_swap`, `decide_shift_claim`) lets 3 and 4 through only for `staff_schedule` = `admin` at the location (otherwise 42501 `only a schedule admin can override`), and never when the person on the shift is the caller (42501 `you cannot override the rules for yourself`, 20261113000200; an override flag that is not needed is ignored); the kinds overridden are written to `shifts.override_kinds` / `_by` / `_at` (audited) and `shift.assigned` carries `override: true`. 1 and 2 are never overridable. Staff-initiated paths check only the acting person's own rules (a swap request checks only that B can work at the location and has `shift_swaps` >= `edit`; B's own rules are checked when B accepts), so nobody learns a co-worker's time off. `apply_shift_template` never overrides: an item whose default assignee fails a rule becomes an open shift and the result row names the rule.
+
+**Atomicity.** Every path reads the row, checks permission, then locks: shift rows (`FOR UPDATE`, in id order when two), then the swap or claim row, then a transaction advisory lock per person (`staffing:person:<id>`, in id order), then re-checks state and rules and moves the assignment in the same transaction. `decide_time_off`, `cancel_time_off`, `set_person_qualification` and `remove_person_qualification` take the same person lock, so an approval of time off and an assignment of that person serialize (approval is refused while the person holds an overlapping scheduled shift). Changes to a shift's assignee close what no longer applies: open swaps / drops of it (as X or Y) become `cancelled`, open claims become `denied` (decided by the system, with events). Assignment RPCs also take a share lock on the schedule, so a change is either before or after `publish_schedule`, never half.
+
+**Shift exchange design.** Swap: A offers X (optionally for B's Y at the same location) -> B accepts -> a manager approves, unless `settings.staffing.auto_approve_swaps` is true, the swap has **no counter shift** (20261113000200: with a counter shift the outcome would tell B whether A can work Y, so those always wait for a manager) and every rule passes at accept time (then it is approved at once; if any rule fails it silently waits for a manager). Drop: A requests; X stays A's until a manager approves, then it is open (`shift.opened`) and the claim path covers it. Claim: a person asks for an open shift; a manager approves, or with `settings.staffing.first_come_open_shifts` the first valid claim is approved at once under the shift lock. Exchanges only for scheduled shifts of a published schedule that have not started. One open swap or drop per shift.
+
+RPCs (all `security definer`, `search_path = ''`, need a user JWT (`not signed in` otherwise), granted to `authenticated` and `service_role`; 42501 `not allowed` for missing, other organization or not permitted, without saying which; permission is checked before any row lock):
+```sql
+-- configuration (staffing_config limit)
+public.position_shifts_missing_qualification(p_position_id uuid) returns integer   -- 000200; staff_schedule >= edit in the position's scope
+public.save_position(p_organization_id uuid, p_location_id uuid, p_name text, p_qualification_ids uuid[] default null,
+  p_position_id uuid default null) returns uuid            -- staff_schedule = admin in the position's scope; ids null = keep, '{}' = none
+public.archive_position(p_position_id uuid, p_archived boolean default true) returns void
+public.save_qualification(p_organization_id uuid, p_name text, p_qualification_id uuid default null) returns uuid  -- admin anywhere in the org
+public.archive_qualification(p_qualification_id uuid, p_archived boolean default true) returns void   -- refused while a position requires it
+public.set_person_qualification(p_organization_id uuid, p_person_id uuid, p_qualification_id uuid,
+  p_valid_from date default null, p_expires_on date default null) returns uuid    -- admin over the person, person visible, not yourself; upsert
+public.remove_person_qualification(p_person_qualification_id uuid) returns void
+public.save_shift_template(p_organization_id uuid, p_location_id uuid, p_name text, p_span_days integer default 7,
+  p_template_id uuid default null) returns uuid             -- staff_schedule >= edit at the location
+public.archive_shift_template(p_template_id uuid, p_archived boolean default true) returns void
+public.add_shift_template_item(p_template_id uuid, p_position_id uuid, p_day_offset integer, p_start_time time,
+  p_duration_minutes integer, p_assigned_person_id uuid default null, p_notes text default null) returns uuid
+public.remove_shift_template_item(p_item_id uuid) returns void
+-- schedules and shifts (shift_edit; publish: schedule_publish); staff_schedule >= edit at the location
+public.create_schedule(p_organization_id uuid, p_location_id uuid, p_week_start date) returns uuid   -- existing id if present
+public.publish_schedule(p_schedule_id uuid) returns void
+public.create_shift(p_schedule_id uuid, p_position_id uuid, p_starts_at timestamptz, p_ends_at timestamptz,
+  p_assigned_person_id uuid default null, p_notes text default null, p_override boolean default false) returns uuid
+public.update_shift(p_shift_id uuid, p_position_id uuid default null, p_starts_at timestamptz default null,
+  p_ends_at timestamptz default null, p_notes text default null, p_override boolean default false) returns void  -- null = keep
+public.assign_shift(p_shift_id uuid, p_person_id uuid, p_override boolean default false) returns void   -- null person = open it
+public.cancel_shift(p_shift_id uuid) returns void            -- draft: deleted; published: cancelled + shift.cancelled
+public.apply_shift_template(p_schedule_id uuid, p_template_id uuid, p_first_day integer default 0)
+  returns table (shift_id uuid, assigned_person_id uuid, refused text, item_id uuid)   -- draft only; one row per item (000200)
+public.shift_overrides(p_schedule_id uuid) returns table (shift_id uuid, override_kinds text[],
+  override_by_person_id uuid, override_at timestamptz)        -- 000200; staff_schedule >= edit at the location
+-- exchange (shift_exchange; decisions: shift_decide)
+public.request_shift_swap(p_shift_id uuid, p_to_person_id uuid, p_counter_shift_id uuid default null, p_note text default null) returns uuid
+public.respond_shift_swap(p_swap_id uuid, p_accept boolean) returns text   -- B only; 'accepted' | 'approved' (auto) | 'denied'
+public.decide_shift_swap(p_swap_id uuid, p_approve boolean, p_override boolean default false) returns void  -- shift_swaps = admin, not a party
+public.cancel_shift_swap(p_swap_id uuid) returns void        -- either party while requested / accepted
+public.request_shift_drop(p_shift_id uuid, p_note text default null) returns uuid
+public.request_shift_claim(p_shift_id uuid) returns uuid     -- shift_swaps >= edit; caller must pass every rule now
+public.decide_shift_claim(p_claim_id uuid, p_approve boolean, p_override boolean default false) returns void
+public.cancel_shift_claim(p_claim_id uuid) returns void      -- the claimant
+public.swap_candidates(p_shift_id uuid) returns table (person_id uuid, display_name text)  -- 000200; the shift's assignee only
+public.my_claimable_shifts(p_organization_id uuid, p_limit integer default 50) returns table (shift_id uuid,
+  location_id uuid, schedule_id uuid, position_id uuid, starts_at timestamptz, ends_at timestamptz)   -- <= 200
+-- availability and time off (availability_edit, time_off_request, time_off_decide)
+public.add_availability(p_organization_id uuid, p_day_of_week integer, p_start_time time, p_end_time time, p_kind text,
+  p_effective_from date default null, p_effective_to date default null) returns uuid   -- own; availability_time_off >= edit somewhere
+public.remove_availability(p_availability_id uuid) returns void
+public.request_time_off(p_organization_id uuid, p_starts_on date, p_ends_on date, p_reason text default null) returns uuid
+public.cancel_time_off(p_time_off_id uuid) returns void      -- own; pending, or approved and not ended
+public.decide_time_off(p_time_off_id uuid, p_approve boolean) returns void   -- availability_time_off = admin over the person, not own
+-- organization settings (000200; staffing_config limit)
+public.set_staffing_switches(p_organization_id uuid, p_auto_approve_swaps boolean default null,
+  p_first_come_open_shifts boolean default null) returns void   -- admin role at organization scope; null = keep
+```
+
+Errors the app maps (stable messages; DETAIL carries the rule code on 23514 rule errors):
+
+| SQLSTATE | Message | When |
+| --- | --- | --- |
+| 42501 | `not signed in` / `not allowed` | no JWT / missing, other org, or not permitted |
+| 42501 | `only a schedule admin can override`, `you cannot override the rules for yourself` (000200), `you cannot decide your own swap`, `you cannot decide your own request`, `you cannot change your own qualifications` | visible row, wrong actor |
+| 23514 | `that person cannot work at this location` (DETAIL `not_member`), `that person already has a shift at that time` (`overlap`), `that person has approved time off then` (`time_off`), `that person is missing a required qualification` (`qualification`) | assignment rules |
+| 23514 | `you cannot take this shift` (DETAIL `unavailable`; 000200: on a staff path, the caller's overlap is with a draft shift), `a schedule holds at most 2000 shifts` (DETAIL `too_many_shifts`; 000200), `you cannot swap with that person` (`not_member`), `the shift changed since the swap was offered` / `... drop was requested` (`stale`), `this shift is no longer open` (`stale`), `that person has shifts on those days; reassign them first` (`has_shifts`), `another schedule already covers part of that week` | exchange and time off rules |
+| 22023 | `invalid week`, `a week must start on the organization's first day of the week`, `a shift needs a start and an end`, `a shift ends after it starts and lasts at most 24 hours`, `the shift must start during the schedule week`, `unknown position at this location`, `notes are too long`, `the note is too long`, `the reason is too long`, `a name needs 1 to 100 characters`, `a position with that name already exists`, `a qualification with that name already exists`, `unknown qualification`, `at most 20 qualifications`, `a position still requires this qualification`, `the location of a position cannot change`, `a template covers 1 day or 7 days`, `the length of a template cannot change`, `that day is outside the template`, `that day is outside the week`, `a shift needs a start time and 15 minutes to 24 hours`, `a template holds at most 200 shifts`, `that template belongs to another location`, `that template is archived`, `a template can only be added to a draft schedule`, `this schedule is already published`, `a cancelled shift cannot be changed` / `... assigned`, `this shift is already cancelled`, `nothing to change`, `this shift cannot be swapped now` / `... dropped now`, `that shift cannot be part of this swap`, `this shift already has an open swap or drop`, `this swap is no longer open`, `this request is not waiting for a decision`, `this request is already closed`, `you already asked for this shift`, `accept or decline`, `approve or deny`, `invalid day`, `invalid kind`, `invalid dates`, `the end must be after the start`, `at most 100 availability windows`, `choose a first and last day, at most a year apart`, `those days are too far in the past or future`, `this request can no longer be cancelled` | bad input / state |
+| PT429 | `slow down` | write limits above |
+
+Worker functions, **service_role only** (each refuses a JWT with a `sub`; each joins only rows of the event's organization):
+```sql
+public.emit_uncovered_shift_events(p_within interval, p_limit integer default 500) returns integer
+    -- shift.uncovered once per shift per starts_at: open, scheduled, published, starting in (now, now + p_within];
+    -- p_within 1 minute .. 14 days, p_limit 1-5000; round-robin by organization, SKIP LOCKED
+public.worker_shift_for_event(p_event_id uuid) returns table (shift_id, organization_id, location_id, location_name,
+    location_timezone, schedule_id, schedule_status, week_start, position_id, position_name, starts_at, ends_at,
+    assigned_person_id, status)        -- shift.* events, and the shift of a shift_swap.* / shift_claim.* event; no notes
+public.worker_shift_event_recipients(p_event_id uuid) returns table (person_id uuid, reason text)
+    -- every staffing event; one row per person; only active, non-archived members of the event's organization
+```
+
+| Event | Recipients (`reason`) |
+| --- | --- |
+| `schedule.published` | Current holders of scheduled shifts in that schedule (`schedule_published`). The payload carries `open_shift_count` (000200) so the notice can say "N open shifts" |
+| `shift.assigned` / `.unassigned` / `.changed` / `.cancelled` | The payload `person_id` (`assigned` / `unassigned` / `changed` / `cancelled`) |
+| `shift.opened` | Not emitted by `publish_schedule` (000200); at most 20 per location per clock hour. While still open, published and not started: people with `shift_swaps` >= `edit` at the location who pass every rule for it now (`can_claim`) |
+| `shift.uncovered` | While still open: `staff_schedule` >= `edit` or `shift_swaps` = `admin` at the location (`uncovered`) |
+| `shift_swap.requested` | Swap: B while still requested (`swap_offered`). Drop: `shift_swaps` admins at the location while requested, parties excluded (`needs_approval`) |
+| `shift_swap.accepted` | A (`swap_accepted`); plus approvers while still accepted (`needs_approval`) |
+| `shift_swap.approved` / `.denied` / `.cancelled` | Both parties except the payload's actor (`swap_approved` / `swap_denied` / `swap_cancelled`) |
+| `shift_claim.requested` | Approvers at the location while still requested, claimant excluded (`needs_approval`) |
+| `shift_claim.approved` / `.denied` | The claimant (`claim_approved` / `claim_denied`); `.cancelled`: nobody |
+| `time_off.requested` | `availability_time_off` admins over the person while still pending (`needs_approval`) |
+| `time_off.decided` | The person (`time_off_decided`) |
+| `time_off.cancelled` | Approvers, only when it had been approved (`time_off_cancelled`) |
+
+New private helpers: `private.has_permission_over_person(org, person, module, level)`, `private.can_see_schedule(org, location, status)`, `private.can_see_shift(org, location, schedule_id, assigned_person_id, status)` (policies; granted to authenticated and service_role); internal, not granted: `private.staffing_setting`, `private.shift_assignment_problems`, `private.require_assignable`, `private.lock_staffing_people`, `private.write_shift_assignee`, `private.after_assignee_change`, `private.close_shift_exchanges`, `private.lock_shift_for_scheduler`, `private.lock_swap_and_shifts`, `private.execute_swap`, `private.execute_claim`, `private.shift_is_exchangeable`, `private.staffing_location_people`, `private.time_off_approvers`, `private.validate_shift_times`, `private.validate_shift_position`, `private.emit_shift_event` / `emit_swap_event` / `emit_claim_event`, trigger `private.tg_shifts_validate`.
+
+#### Review fixes (migration `20261113000200_staff_scheduling_review_fixes`)
+
+| Item | Behaviour now |
+| --- | --- |
+| M1 | An override that is actually needed is refused when the person on the shift is the caller: 42501 `you cannot override the rules for yourself` (`create_shift`, `assign_shift`, `update_shift`). Another admin must do it. |
+| M2 | `shifts.override_kinds`, `override_by_person_id`, `override_at`, `uncovered_emitted_for`: no SELECT for `authenticated` (column grants; `select *` on `shifts` is refused, name the columns). `shift_overrides(p_schedule_id)` returns them for `staff_schedule` >= `edit` at the schedule's location (42501 otherwise). Audit rows of `shifts` redact `override_kinds`, `override_by_person_id`, `override_at` (and `notes`) as `"[redacted]"`; that an override exists stays visible (non-null), its kind does not. Audit rows written before this migration are not rewritten (no real data exists yet). |
+| M4 | (a) `apply_shift_template` charges `shift_edit` once per shift made (at least once). (b) At most **2,000 scheduled shifts per schedule**: `create_shift` and `apply_shift_template` refuse with 23514 `a schedule holds at most 2000 shifts` (DETAIL `too_many_shifts`); `apply_shift_template` is all or nothing. Serialized by a per-schedule advisory lock. (c) `publish_schedule` emits only `schedule.published`; the payload gains `open_shift_count`; recipients unchanged (current holders). (d) `shift.opened` (create on a published schedule, unassign, approved drop) is emitted at most **20 times per location per clock hour** (a fixed window from `consume_rate_limit`, bucket `staffing.shift_opened`, key `organization_id:location_id`; so up to 40 inside any sliding hour that spans two windows). Beyond that the action succeeds without the event; `emit_uncovered_shift_events` still covers those shifts. |
+| M5 | `can_see_shift` own-shift branch, `cancel_time_off`, `cancel_shift_swap`, `cancel_shift_claim` require the caller's person to be in `private.my_person_ids()` (membership and the MFA rules). A person with no role, or an MFA user at aal1, gets 42501 / sees no own shifts. |
+| L1 | `create_shift` and `assign_shift` run the `not_member` rule (organization, membership, location, visibility) before taking the person lock (`private.precheck_assignee`), so a person of another organization is refused at once. |
+| L2 | `archive_qualification` locks the qualification `FOR UPDATE` before checking positions; `save_position` locks the qualifications it names `FOR SHARE` before checking them. The later call sees the earlier one: `unknown qualification` or `a position still requires this qualification`. |
+| L3 | Auto-approval applies only to swaps without a counter shift. |
+| L4 | Staff paths (`request_shift_claim`, first-come claim, `respond_shift_swap` accept): if the caller's overlap is only with shifts of draft schedules, the refusal is 23514 `you cannot take this shift` (DETAIL `unavailable`); an overlap with one of their published shifts still says `that person already has a shift at that time`. `my_claimable_shifts` still leaves such a shift out (absence only). `decide_time_off` keeps counting every scheduled shift of the person (drafts and other locations included) and keeps its message, which names no location or schedule: an approval must never leave approved time off under an assigned shift, and the decider (an `availability_time_off` admin over the person) learns only that some shift exists on those days. |
+| L5 | `position_shifts_missing_qualification(p_position_id) returns integer`: future scheduled shifts of the position whose assignee lacks a requirement on the shift's local date and has no qualification override. `staff_schedule` >= `edit` in the position's scope. Call it after `save_position`. Nothing is refused or unassigned. `save_position` keeps its signature (returns the id). |
+| L6 | `update_shift` that changes the time or position closes the shift's open swaps / drops (cancelled) and claims (denied), with events, like an assignee change. A notes-only change closes nothing. |
+| L7 | `set_staffing_switches(p_organization_id, p_auto_approve_swaps, p_first_come_open_shifts)`: one UPDATE that merges into `settings.staffing` only (null = keep), so no other key is lost. Same guard as a direct settings update (admin role at organization scope, admin-tier MFA rule), plus the `staffing_config` limit. The app must stop writing the whole `settings` object for this. |
+| DST | `apply_shift_template` returns one row per item (new last column `item_id`). `shift_id` null with `refused` = `time_change` (would last over 24 hours across a clock change) or `position_unavailable` (position archived or not at the location): no shift made. |
+| G1 | `swap_candidates(p_shift_id) returns table (person_id, display_name)`: only for the shift's current assignee (a member) with `shift_swaps` >= `edit` at the location, on a shift they can see (42501 otherwise). Returns exactly the people `request_shift_swap` accepts as the other person (active members who can work at the location, have `shift_swaps` >= `edit` there and are visible to the caller), the caller excluded, at most 500, by name. It never looks at time off, qualifications or other shifts. `display_name` = preferred name (else first name) + last name, from people rows the caller can already read. |
+| G2 | `update_shift`: `p_notes` null keeps the notes; `''` (or only spaces) clears them. Unchanged behaviour, now documented. |
+| G3 | `apply_shift_template`: item `day_offset` d lands on local date `schedules.week_start + p_first_day + d` (the schedule's own `week_start`, the organization's first day of the week). `p_first_day` defaults to 0; a week template takes only 0, a day template 0-6. Unchanged behaviour, now documented. |
+
+New private helpers (not granted): `private.assignee_not_member`, `private.precheck_assignee`, `private.lock_schedule_shift_count`, `private.emit_shift_opened`, `private.max_shifts_per_schedule()` (2000), `private.max_shift_opened_per_hour()` (20).
+
+Known limits of Phase 3: losing an assignment or a qualification, or archiving a person, does not unassign their future shifts (the rules apply when someone is put on a shift); availability is not enforced; audit rows of `availability` and `time_off_requests` (dates and status, reason redacted) are readable by `audit_log` viewers, who are not necessarily `availability_time_off` admins (add both tables to `private.audit_hidden_tables()` if that is not acceptable).
 
 ### People RPCs (migration `20261111000500_people_rpcs`)
 

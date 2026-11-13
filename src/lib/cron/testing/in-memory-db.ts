@@ -29,6 +29,7 @@ import type {
   PushTarget,
   Urgency,
 } from '@/domains/communications';
+import type { ShiftSnapshot, StaffingPort, StaffingRecipient } from '@/domains/staffing';
 
 export const MAX_OUTBOX_ATTEMPTS = 8;
 export const MAX_DELIVERY_ATTEMPTS = 5;
@@ -90,7 +91,7 @@ export function fakeId(): string {
 }
 
 export class InMemoryDb
-  implements OutboxPort, WorkflowPort, TaskReader, NotificationPort, NoticeReader
+  implements OutboxPort, WorkflowPort, TaskReader, NotificationPort, NoticeReader, StaffingPort
 {
   /** Milliseconds; tests move it to expire locks and backoff. */
   clock = 1_000_000;
@@ -388,6 +389,23 @@ export class InMemoryDb
 
   async noticeAudiencePersonIds(noticeId: string): Promise<string[]> {
     return (this.noticeAudience.get(noticeId) ?? []).filter((p) => this.activeMembers.has(p));
+  }
+
+  /** Event id -> the shift worker_shift_for_event returns. */
+  readonly shiftSnapshots = new Map<string, ShiftSnapshot>();
+  /** Event id -> rows worker_shift_event_recipients returns. */
+  readonly staffingRecipientRows = new Map<string, StaffingRecipient[]>();
+
+  async shiftForEvent(eventId: string): Promise<ShiftSnapshot | null> {
+    return this.shiftSnapshots.get(eventId) ?? null;
+  }
+
+  async recipients(eventId: string): Promise<StaffingRecipient[]> {
+    return this.staffingRecipientRows.get(eventId) ?? [];
+  }
+
+  async emitUncovered(): Promise<number> {
+    return 0;
   }
 
   /** Event id -> rows worker_message_recipients_for_event would return. */

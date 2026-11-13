@@ -5,7 +5,7 @@
 begin;
 -- Needed by `supabase test db` (a no-op if pgTAP is already there, as in scripts/db/test-local.sh).
 create extension if not exists pgtap with schema extensions;
-select plan(134 + 18 * (select count(*)::int from pg_class c
+select plan(204 + 18 * (select count(*)::int from pg_class c
   where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p') and (c.relname = 'organizations'
     or exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'organization_id' and not a.attisdropped))));
 
@@ -222,6 +222,53 @@ insert into public.notification_preferences (organization_id, person_id, channel
 select pg_temp.id(v.org), pg_temp.id(v.person), 'email', false from (values ('org_a', 'p_staff_a1'), ('org_b', 'p_staff_b1')) v (org, person);
 
 -- END PHASE 2 ROWS
+
+-- BEGIN PHASE 3 ROWS: byte-identical in every file that uses it (020, 050, 090, 100).
+-- Phase 3 rows: one row in each of the 12 staffing tables, in both organizations, written with the
+-- owner's rights (the API roles cannot write these tables; every write is an RPC). Far-future fixed week
+-- (Monday 2030-01-07). Org A at A1: staff A1 holds a published shift and asked to drop it, and asked for the
+-- open shift; org B at B1: the same for staff B1.
+insert into public.qualifications (id, organization_id, name)
+select pg_temp.id('q_' || v.k), pg_temp.id(v.org), 'Qualification ' || v.k from (values ('a', 'org_a'), ('b', 'org_b')) v (k, org);
+insert into public.positions (id, organization_id, location_id, name)
+select pg_temp.id('pos_' || v.k), pg_temp.id(v.org), pg_temp.id(v.loc), 'Position ' || v.k
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.position_qualifications (organization_id, position_id, qualification_id)
+select pg_temp.id(v.org), pg_temp.id('pos_' || v.k), pg_temp.id('q_' || v.k) from (values ('a', 'org_a'), ('b', 'org_b')) v (k, org);
+insert into public.person_qualifications (organization_id, person_id, qualification_id, valid_from, expires_on)
+select pg_temp.id(v.org), pg_temp.id(v.person), pg_temp.id('q_' || v.k), date '2029-01-01', date '2031-01-01'
+from (values ('a', 'org_a', 'p_staff_a1'), ('b', 'org_b', 'p_staff_b1')) v (k, org, person);
+insert into public.schedules (id, organization_id, location_id, week_start, status, published_at)
+select pg_temp.id('sched_' || v.k), pg_temp.id(v.org), pg_temp.id(v.loc), date '2030-01-07', 'published', now()
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.shifts (id, organization_id, location_id, schedule_id, position_id, starts_at, ends_at, assigned_person_id)
+select pg_temp.id('shift_' || v.k || v.n), pg_temp.id(v.org), pg_temp.id(v.loc), pg_temp.id('sched_' || v.k), pg_temp.id('pos_' || v.k),
+       v.s::timestamptz, v.e::timestamptz, case when v.n = '1' then pg_temp.id(v.person) end
+from (values ('a', '1', 'org_a', 'loc_a1', 'p_staff_a1', '2030-01-08 09:00-05', '2030-01-08 17:00-05'),
+             ('a', '2', 'org_a', 'loc_a1', 'p_staff_a1', '2030-01-09 09:00-05', '2030-01-09 17:00-05'),
+             ('b', '1', 'org_b', 'loc_b1', 'p_staff_b1', '2030-01-08 09:00-07', '2030-01-08 17:00-07'),
+             ('b', '2', 'org_b', 'loc_b1', 'p_staff_b1', '2030-01-09 09:00-07', '2030-01-09 17:00-07')) v (k, n, org, loc, person, s, e);
+insert into public.shift_templates (id, organization_id, location_id, name)
+select pg_temp.id('stpl_' || v.k), pg_temp.id(v.org), pg_temp.id(v.loc), 'Week ' || v.k
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.shift_template_items (organization_id, location_id, template_id, position_id, day_offset, start_time, duration_minutes)
+select pg_temp.id(v.org), pg_temp.id(v.loc), pg_temp.id('stpl_' || v.k), pg_temp.id('pos_' || v.k), 0, time '09:00', 480
+from (values ('a', 'org_a', 'loc_a1'), ('b', 'org_b', 'loc_b1')) v (k, org, loc);
+insert into public.availability (organization_id, person_id, day_of_week, start_time, end_time, kind)
+select pg_temp.id(v.org), pg_temp.id(v.person), 1, time '09:00', time '17:00', 'available'
+from (values ('org_a', 'p_staff_a1'), ('org_b', 'p_staff_b1')) v (org, person);
+insert into public.time_off_requests (organization_id, person_id, starts_on, ends_on, reason)
+select pg_temp.id(v.org), pg_temp.id(v.person), date '2030-02-01', date '2030-02-02', 'Reason ' || v.person
+from (values ('org_a', 'p_staff_a1'), ('org_b', 'p_staff_b1')) v (org, person);
+insert into public.shift_swaps (organization_id, location_id, kind, shift_id, from_person_id)
+select pg_temp.id(v.org), pg_temp.id(v.loc), 'drop', pg_temp.id('shift_' || v.k || '1'), pg_temp.id(v.person)
+from (values ('a', 'org_a', 'loc_a1', 'p_staff_a1'), ('b', 'org_b', 'loc_b1', 'p_staff_b1')) v (k, org, loc, person);
+insert into public.shift_claims (organization_id, location_id, shift_id, person_id)
+select pg_temp.id(v.org), pg_temp.id(v.loc), pg_temp.id('shift_' || v.k || '2'), pg_temp.id(v.person)
+from (values ('a', 'org_a', 'loc_a1', 'p_staff_a1'), ('b', 'org_b', 'loc_b1', 'p_staff_b1')) v (k, org, loc, person);
+
+-- END PHASE 3 ROWS
+
 
 -- BEGIN GENERIC HELPERS: byte-identical in every file that uses them (020, 090).
 -- where-clause selecting one organization's rows (organizations has no organization_id: its id is the org)
@@ -497,6 +544,40 @@ select pg_temp.act_as('postgres');
 insert into public.notices (id, organization_id, location_id, title, body) values (pg_temp.id('notice_live_a'), pg_temp.id('org_a'), null, 'Live A', 'x');
 insert into public.notice_audiences (organization_id, notice_id, location_id) values (pg_temp.id('org_a'), pg_temp.id('notice_live_a'), null);
 update public.notices set status = 'published', publish_at = now() - interval '1 hour', published_at = now() - interval '1 hour' where id = pg_temp.id('notice_live_a');
+-- Phase 3 matrix rows (owner-written; org A at A1). The org admin holds some shifts and is party to some exchanges so each
+-- staffing RPC has something it can legitimately do at aal2 (and must refuse at aal1).
+-- A Sunday week about a month out (org A's week starts on Sunday by default), k weeks later.
+create function pg_temp.p3_week(k int) returns date language sql stable as $$
+  select current_date + 28 + ((7 - extract(dow from current_date + 28)::int) % 7) + 7 * k $$;
+grant execute on function pg_temp.p3_week(int) to public;
+insert into public.positions (id, organization_id, location_id, name) values
+  (pg_temp.id('pos_m'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'Matrix open'),
+  (pg_temp.id('pos_m_arch'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'Matrix to archive');
+insert into public.qualifications (id, organization_id, name) values (pg_temp.id('q_m'), pg_temp.id('org_a'), 'Matrix cert'), (pg_temp.id('q_m2'), pg_temp.id('org_a'), 'Matrix cert two');
+insert into public.person_qualifications (id, organization_id, person_id, qualification_id) values
+  (pg_temp.id('pq_oa'), pg_temp.id('org_a'), pg_temp.id('p_orgadmin_a'), pg_temp.id('q_a')),
+  (pg_temp.id('pq_m'),  pg_temp.id('org_a'), pg_temp.id('p_manager_a1'), pg_temp.id('q_m2'));
+insert into public.shift_templates (id, organization_id, location_id, name) values (pg_temp.id('stpl_m'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'Matrix template');
+insert into public.shift_template_items (id, organization_id, location_id, template_id, position_id, day_offset, start_time, duration_minutes)
+values (pg_temp.id('stpl_item_m'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), pg_temp.id('stpl_m'), pg_temp.id('pos_m'), 2, time '09:00', 60);
+insert into public.schedules (id, organization_id, location_id, week_start) values
+  (pg_temp.id('sched_m1'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), pg_temp.p3_week(0)),
+  (pg_temp.id('sched_m2'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), pg_temp.p3_week(1));
+insert into public.shifts (id, organization_id, location_id, schedule_id, position_id, starts_at, ends_at, assigned_person_id) values
+  (pg_temp.id('shift_m1'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), pg_temp.id('sched_m1'), pg_temp.id('pos_m'), ((pg_temp.p3_week(0) + 1)::timestamp + time '09:00') at time zone 'America/New_York', ((pg_temp.p3_week(0) + 1)::timestamp + time '10:00') at time zone 'America/New_York', null),
+  (pg_temp.id('shift_m2'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), pg_temp.id('sched_m2'), pg_temp.id('pos_m'), ((pg_temp.p3_week(1) + 1)::timestamp + time '09:00') at time zone 'America/New_York', ((pg_temp.p3_week(1) + 1)::timestamp + time '10:00') at time zone 'America/New_York', null);
+insert into public.shifts (id, organization_id, location_id, schedule_id, position_id, starts_at, ends_at, assigned_person_id)
+select pg_temp.id(v.k), pg_temp.id('org_a'), pg_temp.id('loc_a1'), pg_temp.id('sched_a'), pg_temp.id('pos_m'),
+       timestamptz '2030-01-10 00:00-05' + make_interval(hours => v.h), timestamptz '2030-01-10 00:00-05' + make_interval(hours => v.h + 1), pg_temp.id(v.person)
+from (values ('sm_x', 1, 'p_orgadmin_a'), ('sm_y', 3, 'p_orgadmin_a'), ('sm_u', 5, 'p_orgadmin_a'), ('sm_w', 7, 'p_staff_a1'), ('sm_v', 9, 'p_staff_a1')) v (k, h, person);
+insert into public.shift_swaps (id, organization_id, location_id, kind, shift_id, from_person_id, to_person_id, status, accepted_at) values
+  (pg_temp.id('swap_m1'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'swap', pg_temp.id('sm_y'), pg_temp.id('p_orgadmin_a'), pg_temp.id('p_staff_a1'), 'requested', null),
+  (pg_temp.id('swap_m2'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'swap', pg_temp.id('sm_w'), pg_temp.id('p_staff_a1'), pg_temp.id('p_orgadmin_a'), 'requested', null),
+  (pg_temp.id('swap_m3'), pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'swap', pg_temp.id('sm_v'), pg_temp.id('p_staff_a1'), pg_temp.id('p_manager_a1'), 'accepted', now());
+insert into public.availability (id, organization_id, person_id, day_of_week, start_time, end_time, kind)
+values (pg_temp.id('avail_m'), pg_temp.id('org_a'), pg_temp.id('p_orgadmin_a'), 3, time '08:00', time '12:00', 'preferred');
+insert into public.time_off_requests (id, organization_id, person_id, starts_on, ends_on) values
+  (pg_temp.id('to_m'), pg_temp.id('org_a'), pg_temp.id('p_orgadmin_a'), current_date + 90, current_date + 91);
 create temp table cases (n int primary key, fn text, expr text, e1 text, e2 text);
 grant all on cases to public;
 insert into cases values
@@ -533,7 +614,43 @@ insert into cases values
   (31, 'delete_push_subscription',     $$public.delete_push_subscription(pg_temp.id('org_a'), 'https://fcm.googleapis.com/fcm/send/oa')$$, '^false$', '^true$'),
   (32, 'notice_acknowledgment_status', $$(select count(*) from public.notice_acknowledgment_status(pg_temp.id('notice_a')))$$, '^ERR 42501$', '^[1-9][0-9]*$'),
   (33, 'my_notices',                   $$(select count(*) from public.my_notices())$$, '^0$', '^1$'),
-  (34, 'can_resend_person_invite',     $$public.can_resend_person_invite(pg_temp.id('org_a'), pg_temp.id('p_staff_a1'))$$, '^false$', '^true$');
+  (34, 'can_resend_person_invite',     $$public.can_resend_person_invite(pg_temp.id('org_a'), pg_temp.id('p_staff_a1'))$$, '^false$', '^true$'),
+  -- Phase 3 (000100 of 2026-11-13): every staffing RPC
+  (35, 'save_qualification',           $$public.save_qualification(pg_temp.id('org_a'), 'Matrix new cert')$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
+  (36, 'save_position',                $$public.save_position(pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'Matrix new position')$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
+  (37, 'archive_qualification',        $$public.archive_qualification(pg_temp.id('q_m'))$$, '^ERR 42501$', '^$'),
+  (38, 'archive_position',             $$public.archive_position(pg_temp.id('pos_m_arch'))$$, '^ERR 42501$', '^$'),
+  (39, 'set_person_qualification',     $$public.set_person_qualification(pg_temp.id('org_a'), pg_temp.id('p_staff_a1'), pg_temp.id('q_m2'))$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
+  (40, 'remove_person_qualification',  $$public.remove_person_qualification(pg_temp.id('pq_m'))$$, '^ERR 42501$', '^$'),
+  (41, 'save_shift_template',          $$public.save_shift_template(pg_temp.id('org_a'), pg_temp.id('loc_a1'), 'Matrix new template')$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
+  (42, 'add_shift_template_item',      $$public.add_shift_template_item(pg_temp.id('stpl_m'), pg_temp.id('pos_m'), 1, '10:00', 60)$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
+  (43, 'remove_shift_template_item',   $$public.remove_shift_template_item(pg_temp.id('stpl_item_m'))$$, '^ERR 42501$', '^$'),
+  (44, 'archive_shift_template',       $$public.archive_shift_template(pg_temp.id('stpl_m'))$$, '^ERR 42501$', '^$'),
+  (45, 'create_schedule',              $$public.create_schedule(pg_temp.id('org_a'), pg_temp.id('loc_a2'), pg_temp.p3_week(0))$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
+  (46, 'create_shift',                 $$public.create_shift(pg_temp.id('sched_m2'), pg_temp.id('pos_m'), ((pg_temp.p3_week(1) + 2)::timestamp + time '09:00') at time zone 'America/New_York', ((pg_temp.p3_week(1) + 2)::timestamp + time '10:00') at time zone 'America/New_York')$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
+  (47, 'update_shift',                 $$public.update_shift(pg_temp.id('shift_m2'), null, null, null, 'matrix note')$$, '^ERR 42501$', '^$'),
+  (48, 'assign_shift',                 $$public.assign_shift(pg_temp.id('shift_m2'), pg_temp.id('p_staff_a1'))$$, '^ERR 42501$', '^$'),
+  (49, 'apply_shift_template',         $$(select count(*) from public.apply_shift_template(pg_temp.id('sched_m1'), pg_temp.id('stpl_a'), 0))$$, '^ERR 42501$', '^[1-9]'),
+  (50, 'cancel_shift',                 $$public.cancel_shift(pg_temp.id('shift_m2'))$$, '^ERR 42501$', '^$'),
+  (51, 'publish_schedule',             $$public.publish_schedule(pg_temp.id('sched_m1'))$$, '^ERR 42501$', '^$'),
+  (52, 'request_shift_swap',           $$public.request_shift_swap(pg_temp.id('sm_x'), pg_temp.id('p_staff_a1'))$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
+  (53, 'cancel_shift_swap',            $$public.cancel_shift_swap(pg_temp.id('swap_m1'))$$, '^ERR 42501$', '^$'),
+  (54, 'respond_shift_swap',           $$public.respond_shift_swap(pg_temp.id('swap_m2'), true)$$, '^ERR 42501$', '^accepted$'),
+  (55, 'decide_shift_swap',            $$public.decide_shift_swap(pg_temp.id('swap_m3'), false)$$, '^ERR 42501$', '^$'),
+  (56, 'request_shift_drop',           $$public.request_shift_drop(pg_temp.id('sm_u'))$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
+  (57, 'my_claimable_shifts',          $$(select count(*) from public.my_claimable_shifts(pg_temp.id('org_a')))$$, '^0$', '^[1-9]'),
+  (58, 'request_shift_claim',          $$public.request_shift_claim(pg_temp.id('shift_a2'))$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
+  (59, 'cancel_shift_claim',           $$public.cancel_shift_claim((select id from public.shift_claims where shift_id = pg_temp.id('shift_a2') and person_id = pg_temp.id('p_orgadmin_a')))$$, '^ERR 42501$', '^$'),
+  (60, 'decide_shift_claim',           $$public.decide_shift_claim((select id from public.shift_claims where shift_id = pg_temp.id('shift_a2') and person_id = pg_temp.id('p_staff_a1')), false)$$, '^ERR 42501$', '^$'),
+  (61, 'add_availability',             $$public.add_availability(pg_temp.id('org_a'), 2, '09:00', '17:00', 'available')$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
+  (62, 'remove_availability',          $$public.remove_availability(pg_temp.id('avail_m'))$$, '^ERR 42501$', '^$'),
+  (63, 'request_time_off',             $$public.request_time_off(pg_temp.id('org_a'), current_date + 60, current_date + 61)$$, '^ERR 42501$', '^[0-9a-f-]{36}$'),
+  (64, 'cancel_time_off',              $$public.cancel_time_off(pg_temp.id('to_m'))$$, '^ERR 42501$', '^$'),
+  (66, 'shift_overrides',              $$(select count(*) from public.shift_overrides(pg_temp.id('sched_a')))$$, '^ERR 42501$', '^[0-9]+$'),
+  (67, 'swap_candidates',              $$(select count(*) from public.swap_candidates(pg_temp.id('sm_x')))$$, '^ERR 42501$', '^[0-9]+$'),
+  (68, 'position_shifts_missing_qualification', $$public.position_shifts_missing_qualification(pg_temp.id('pos_m'))$$, '^ERR 42501$', '^[0-9]+$'),
+  (69, 'set_staffing_switches',        $$public.set_staffing_switches(pg_temp.id('org_a'), null, null)$$, '^ERR 42501$', '^$'),
+  (65, 'decide_time_off',              $$public.decide_time_off((select id from public.time_off_requests where person_id = pg_temp.id('p_staff_a1')), true)$$, '^ERR 42501$', '^$');
 
 -- Every function a signed-in user can call through /rpc is in the table above (a new one must be added on purpose).
 select is((select coalesce(string_agg(p.proname, ', ' order by p.proname), '') from pg_proc p
@@ -555,6 +672,9 @@ select is((select status from public.tasks where id = pg_temp.id('task_a')), 'op
 select is((select status from public.notices where id = pg_temp.id('notice_a')), 'draft', 'the aal1 attempts left the notice a draft');
 select is((select status from public.outbox_events where id = pg_temp.id('ev_a')), 'dead', 'the aal1 attempts left the dead event dead');
 select is((select count(*) from public.people where organization_id = pg_temp.id('org_a') and first_name = 'Nia'), 0::bigint, 'the aal1 attempts created no person');
+-- (cancel_shift_swap, cancel_time_off and cancel_shift_claim are refused at aal1 like everything else: 20261113000200 M5 made them
+-- require real membership under the MFA rules; they are rows 53, 59 and 64 of the matrix.)
+select pg_temp.act_as('postgres');
 
 select pg_temp.act_as('u_orgadmin_a', 'aal2');
 select matches(pg_temp.val(c.expr), c.e2, 'twin, org admin A at aal2: ' || c.fn || ' -> ' || c.e2)
